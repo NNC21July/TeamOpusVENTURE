@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from tools.route_airspace_compliance.decision_types import CheckResult
+from tools.route_airspace_compliance.decision_types import CheckResult, OverallDecision
 
 @dataclass(frozen=True)
 class Waypoint:
@@ -46,3 +46,16 @@ class WaypointCheckResult:
     result: CheckResult
     matched_nfzs: tuple[NfzMatch, ...] = ()
     message: str | None = None
+
+
+@dataclass(frozen=True)
+class RouteComplianceResponse:
+    # Result returned by the tool for the whole route
+    decision: OverallDecision
+    route_clear: bool
+    waypoint_results: tuple[WaypointCheckResult, ...] = ()
+    violations: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    missing_inputs: tuple[str, ...] = ()
+    required_actions: tuple[str, ...] = ()
+    data_checked_at: datetime | None = None
