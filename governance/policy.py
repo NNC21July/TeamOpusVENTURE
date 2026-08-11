@@ -6,13 +6,13 @@ class Tier(str, Enum):
     ALLOW = "ALLOW"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
     DENY = "DENY"
-    REQUIRE_DUAL_APPROVAL = "REQUIRE_DUAL_APPROVAL"
 
 
 POLICIES: dict[str, Tier] = {
     "list_drones": Tier.ALLOW,
     "book_airspace": Tier.REQUIRE_APPROVAL,
-    "testing_tool": Tier.REQUIRE_DUAL_APPROVAL,
+    "testing_tool": Tier.REQUIRE_APPROVAL,
+    "takeoff": Tier.REQUIRE_APPROVAL
 }
 
 def get_tier_for_tool(tool_name: str) -> Tier:

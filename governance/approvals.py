@@ -38,15 +38,21 @@ def _save_requests(requests: dict[str, Request]) -> None:
     tmp.write_text(json.dumps(raw, indent=2))
     tmp.replace(REQUESTS_FILE)   # atomic swap — real file is never half-written
 
+def list_requests(status: RequestStatus | None = None) -> list[Request]:
+    if status is None:
+        return list(_load_requests().values())
+    else:
+        reqs = _load_requests().values()
+        return [i for i in reqs if i.status == status]
 
-def _hash(tool: str, params: dict) -> str:
+def hash_params(tool: str, params: dict) -> str:
     canonical = json.dumps({"tool": tool, "params": params}, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def create_request(tool: str, params: dict) -> Request:
     requests = _load_requests()
-    params_hash = _hash(tool, params)
+    params_hash = hash_params(tool, params)
 
     for existing in requests.values():
         if existing.params_hash == params_hash and existing.status == RequestStatus.PENDING:
@@ -95,7 +101,7 @@ def deny(request_id: str, pilot_id: str) -> None:
     _save_requests(requests)
 
 
-def consume(request_id: str, tool: str, params: dict) -> None:
+def consume(request_id: str, tool: str, params: dict) -> Request:
     requests = _load_requests()
     request = requests.get(request_id)
 
@@ -103,8 +109,10 @@ def consume(request_id: str, tool: str, params: dict) -> None:
         raise ValueError(f"Request {request_id} not found")
     if request.status != RequestStatus.APPROVED:
         raise ValueError(f"Request {request_id} is {request.status}, not APPROVED")
-    if request.params_hash != _hash(tool, params):
+    if request.params_hash != hash_params(tool, params):
         raise ValueError(f"Request {request_id} params do not match this call")
 
     request.status = RequestStatus.CONSUMED
     _save_requests(requests)
+    
+    return request
