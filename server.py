@@ -1,6 +1,7 @@
 from mcp.server.fastmcp.server import FastMCP
 
-import api_client
+import api_client.rest_client as rest_client
+from tools.get_live_telemetry import get_live_telemetry
 
 mcp = FastMCP("Team-Opus MCP Server")
 
@@ -49,10 +50,26 @@ def list_drones() -> dict:
     fleet data and changes nothing.
     """
     try:
-        data = api_client.get_drones()
-    except api_client.APIError as exc:
+        data = rest_client.get_drones()
+    except rest_client.APIError as exc:
         return {"error": str(exc)}
     return _shape_drones(data)
+
+@mcp.tool()
+async def get_live_telemetry(drone_id: str, limit: int = 3, timeout_seconds: float = 5.0) -> dict:
+    """
+    Collect a small telemetry snapshot from the live WebSocket for a specific drone.
+
+    Args:
+        drone_id (str): The unique identifier of the drone.
+        limit (int): The maximum number of telemetry messages to collect. Default is 3.
+        timeout_seconds (float): The maximum time to wait for each message in seconds. Default is 5.0.
+
+    Use this to answer questions like "what is the current telemetry for drone X?" or to get a quick snapshot of the drone's state. 
+    Returns a dictionary containing the status of the operation, the drone_id, the count of messages received, and the messages themselves. 
+    If an error occurs, it returns an error message.
+    """
+    return await get_live_telemetry(drone_id, limit=limit, timeout_seconds=timeout_seconds)
 
 
 if __name__ == "__main__":
