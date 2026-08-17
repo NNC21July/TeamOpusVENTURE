@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from tools.route_airspace_compliance.decision_types import CheckResult, OverallDecision
+from tools.route_airspace_compliance.recurrence_schemas import RecurringSchedule
 
 @dataclass(frozen=True)
 class Waypoint:
@@ -29,6 +30,7 @@ class NfzRecord:
     maximum_altitude_m: float | None
     valid_from: datetime | None
     valid_until: datetime | None
+    recurring_schedule: RecurringSchedule | None = None
 
 @dataclass(frozen=True)
 class NfzMatch:
@@ -59,3 +61,4 @@ class RouteComplianceResponse:
     missing_inputs: tuple[str, ...] = ()
     required_actions: tuple[str, ...] = ()
     data_checked_at: datetime | None = None
+    
