@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import auth
 import websockets
 from typing import Any
@@ -18,6 +22,7 @@ async def _get_telemetry_stream(
 
     params = urlencode({
         "droneId": drone_id,
+        # Get our access token from the auth module
         "access_token": auth.get_token(),
     })
 
@@ -63,3 +68,20 @@ async def _get_telemetry_stream(
         raise WebSocketError(
             f"Failed to connect to telemetry WebSocket: {exc}"
         ) from exc
+
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    drone_id = '0ba2c40dca916d1eb4414d1fbe03db83'  # Replace with your actual drone ID
+    limit = 3
+    timeout_seconds = 5.0
+
+    try:
+        telemetry_data = asyncio.run(
+            _get_telemetry_stream(drone_id, limit, timeout_seconds)
+        )
+        print("Telemetry Data:", telemetry_data)
+    except WebSocketError as e:
+        print(f"Error: {e}")
