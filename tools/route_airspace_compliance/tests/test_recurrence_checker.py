@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 from tools.route_airspace_compliance.checkers.recurrence_checker import recurring_schedule_overlaps
-from tools.route_airspace_compliance.recurrence_schemas import DailyRepetition, RecurringSchedule
+from tools.route_airspace_compliance.recurrence_schemas import DailyRepetition, RecurringSchedule, Weekday, WeeklyRepetition
 
 SINGAPORE_TIMEZONE = ZoneInfo("Asia/Singapore")
 
@@ -13,6 +13,20 @@ BASE_DAILY_SCHEDULE = RecurringSchedule(
     start_time=time(15, 0),
     end_time=time(18, 0),
     recurrence_pattern=DailyRepetition(),
+)
+
+BASE_WEEKLY_SCHEDULE = RecurringSchedule(
+    timezone="Asia/Singapore",
+    effective_from=date(2026, 8, 3),
+    start_time=time(15, 0),
+    end_time=time(18, 0),
+    recurrence_pattern=WeeklyRepetition(
+        days_of_week=(
+            Weekday.MONDAY,
+            Weekday.WEDNESDAY,
+            Weekday.FRIDAY,
+        ),
+    ),
 )
 
 def overlaps_on_august_day(
@@ -259,3 +273,107 @@ def test_daily_schedule_rejects_reversed_effective_range() -> None:
     )
     with pytest.raises(ValueError, match="effective_until"):
         overlaps_on_august_day(schedule, 15)
+
+
+@pytest.mark.parametrize("selected_day", (3, 5, 7))
+def test_weekly_schedule_overlaps_on_each_selected_weekday(
+    selected_day: int,
+) -> None:
+    assert overlaps_on_august_day(
+        BASE_WEEKLY_SCHEDULE,
+        selected_day,
+    ) is True
+
+def test_weekly_schedule_does_not_overlap_on_unselected_weekday() -> None:
+    assert overlaps_on_august_day(
+        BASE_WEEKLY_SCHEDULE,
+        day=4,
+    ) is False
+
+def test_weekly_schedule_respects_every_weeks_interval() -> None:
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        recurrence_pattern=WeeklyRepetition(
+            days_of_week=(Weekday.MONDAY,),
+            every_weeks=2,
+        ),
+    )
+    assert overlaps_on_august_day(schedule, day=3) is True
+    assert overlaps_on_august_day(schedule, day=10) is False
+    assert overlaps_on_august_day(schedule, day=17) is True
+
+def test_weekly_schedule_checks_next_day_when_flight_crosses_midnight() -> None:
+    result = recurring_schedule_overlaps(
+        schedule=BASE_WEEKLY_SCHEDULE,
+        planned_start_time=datetime(
+            2026, 8, 9, 19, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 10, 16, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+    assert result is True
+
+def test_weekly_schedule_does_not_activate_on_excluded_date() -> None:
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        excluded_dates=(date(2026, 8, 5),),
+    )
+    assert overlaps_on_august_day(schedule, day=5) is False
+
+def test_weekly_schedule_respects_effective_until_date() -> None:
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        effective_until=date(2026, 8, 5),
+    )
+    assert overlaps_on_august_day(schedule, day=5) is True
+    assert overlaps_on_august_day(schedule, day=7) is False
+
+def test_weekly_schedule_uses_weekday_in_schedule_timezone() -> None:
+    utc_timezone = ZoneInfo("UTC")
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        start_time=time(1, 0),
+        end_time=time(3, 0),
+        recurrence_pattern=WeeklyRepetition(
+            days_of_week=(Weekday.MONDAY,),
+        ),
+    )
+    result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 2, 17, 30,
+            tzinfo=utc_timezone,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 2, 18, 30,
+            tzinfo=utc_timezone,
+        ),
+    )
+    assert result is True
+
+@pytest.mark.parametrize("every_weeks", (0, -1))
+def test_weekly_schedule_rejects_non_positive_interval(
+    every_weeks: int,
+) -> None:
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        recurrence_pattern=WeeklyRepetition(
+            days_of_week=(Weekday.MONDAY,),
+            every_weeks=every_weeks,
+        ),
+    )
+    with pytest.raises(ValueError, match="every_weeks"):
+        overlaps_on_august_day(schedule, day=3)
+
+def test_weekly_schedule_rejects_empty_weekday_selection() -> None:
+    schedule = replace(
+        BASE_WEEKLY_SCHEDULE,
+        recurrence_pattern=WeeklyRepetition(
+            days_of_week=(),
+        ),
+    )
+    with pytest.raises(ValueError, match="days_of_week"):
+        overlaps_on_august_day(schedule, day=3)

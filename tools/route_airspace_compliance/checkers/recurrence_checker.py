@@ -1,14 +1,29 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from tools.route_airspace_compliance.recurrence_schemas import DailyRepetition, RecurringSchedule
+from tools.route_airspace_compliance.recurrence_schemas import DailyRepetition, RecurringSchedule, Weekday, WeeklyRepetition
+
+PYTHON_WEEKDAYS = (
+    Weekday.MONDAY,
+    Weekday.TUESDAY,
+    Weekday.WEDNESDAY,
+    Weekday.THURSDAY,
+    Weekday.FRIDAY,
+    Weekday.SATURDAY,
+    Weekday.SUNDAY,
+)
 
 def recurring_schedule_overlaps(*, schedule: RecurringSchedule, planned_start_time: datetime, planned_end_time: datetime) -> bool:
     repetition = schedule.recurrence_pattern
-    if not isinstance(repetition, DailyRepetition):
-        raise NotImplementedError("Only daily repetition is implemented")
-    
-    if repetition.every_days < 1:
-        raise ValueError("every_days must be at least 1")
+    if isinstance(repetition, DailyRepetition):
+        if repetition.every_days < 1:
+            raise ValueError("every_days must be at least 1")
+    elif isinstance(repetition, WeeklyRepetition):
+        if repetition.every_weeks < 1:
+            raise ValueError("every_weeks must be at least 1")
+        if not repetition.days_of_week:
+            raise ValueError("days_of_week must contain at least one weekday")
+    else:
+        raise NotImplementedError("Only daily and weekly repetition are implemented")
     
     if schedule.end_time <= schedule.start_time:
         raise ValueError("Overnight recurring schedules are not implemented")
@@ -45,8 +60,17 @@ def recurring_schedule_overlaps(*, schedule: RecurringSchedule, planned_start_ti
             continue
         
         days_since_start = (scheduled_date - schedule.effective_from).days
-        if days_since_start % repetition.every_days != 0:
-            continue
+        if isinstance(repetition, DailyRepetition):
+            if days_since_start % repetition.every_days != 0:
+                continue
+        elif isinstance(repetition, WeeklyRepetition):
+            scheduled_weekday = PYTHON_WEEKDAYS[scheduled_date.weekday()]
+            if scheduled_weekday not in repetition.days_of_week:
+                continue
+            
+            weeks_since_start = days_since_start // 7
+            if weeks_since_start % repetition.every_weeks != 0:
+                continue
     
         activation_start = datetime.combine(
             scheduled_date,
