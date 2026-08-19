@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from tools.route_airspace_compliance.checkers.recurrence_checker import recurring_schedule_overlaps
 from tools.route_airspace_compliance.recurrence_schemas import (
     DailyRepetition,
+    Month,
     MonthlyRepetition,
     NthWeekdayOfMonth,
     RecurringSchedule,
@@ -12,6 +13,7 @@ from tools.route_airspace_compliance.recurrence_schemas import (
     Weekday,
     WeekPosition,
     WeeklyRepetition,
+    YearlyRepetition,
 )
 
 SINGAPORE_TIMEZONE = ZoneInfo("Asia/Singapore")
@@ -46,6 +48,19 @@ BASE_MONTHLY_SCHEDULE = RecurringSchedule(
     recurrence_pattern=MonthlyRepetition(
         date_selection=SpecificDaysOfMonth(
             days=(18, 21, 23),
+        ),
+    ),
+)
+
+BASE_YEARLY_SCHEDULE = RecurringSchedule(
+    timezone="Asia/Singapore",
+    effective_from=date(2026, 1, 1),
+    start_time=time(15, 0),
+    end_time=time(18, 0),
+    recurrence_pattern=YearlyRepetition(
+        months=(Month.AUGUST, Month.OCTOBER),
+        date_selection=SpecificDaysOfMonth(
+            days=(18, 21),
         ),
     ),
 )
@@ -586,3 +601,188 @@ def test_monthly_schedule_rejects_invalid_specific_day(
     )
     with pytest.raises(ValueError, match="days"):
         overlaps_on_date(schedule, date(2026, 1, 15))
+
+
+@pytest.mark.parametrize(
+    "selected_date",
+    (
+        date(2026, 8, 18),
+        date(2026, 10, 21),
+    ),
+)
+def test_yearly_specific_days_overlap_in_each_selected_month(
+    selected_date: date,
+) -> None:
+    assert overlaps_on_date(
+        BASE_YEARLY_SCHEDULE,
+        selected_date,
+    ) is True
+
+def test_yearly_specific_days_do_not_overlap_on_unselected_date() -> None:
+    assert overlaps_on_date(
+        BASE_YEARLY_SCHEDULE,
+        date(2026, 8, 20),
+    ) is False
+
+def test_yearly_schedule_does_not_overlap_in_unselected_month() -> None:
+    assert overlaps_on_date(
+        BASE_YEARLY_SCHEDULE,
+        date(2026, 9, 18),
+    ) is False
+
+def test_yearly_schedule_respects_every_years_interval() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=SpecificDaysOfMonth(days=(15,)),
+            every_years=2,
+        ),
+    )
+    assert overlaps_on_date(schedule, date(2026, 8, 15)) is True
+    assert overlaps_on_date(schedule, date(2027, 8, 15)) is False
+    assert overlaps_on_date(schedule, date(2028, 8, 15)) is True
+
+def test_yearly_specific_day_is_skipped_when_month_is_too_short() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.JUNE, Month.JULY),
+            date_selection=SpecificDaysOfMonth(days=(31,)),
+        ),
+    )
+    assert overlaps_on_date(schedule, date(2026, 6, 30)) is False
+    assert overlaps_on_date(schedule, date(2026, 7, 31)) is True
+
+def test_yearly_february_29_only_occurs_in_leap_year() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.FEBRUARY,),
+            date_selection=SpecificDaysOfMonth(days=(29,)),
+        ),
+    )
+    assert overlaps_on_date(schedule, date(2026, 2, 28)) is False
+    assert overlaps_on_date(schedule, date(2028, 2, 29)) is True
+
+@pytest.mark.parametrize(
+    "selected_date",
+    (
+        date(2026, 8, 23),
+        date(2026, 10, 25),
+    ),
+)
+def test_yearly_nth_weekday_overlaps_in_each_selected_month(
+    selected_date: date,
+) -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST, Month.OCTOBER),
+            date_selection=NthWeekdayOfMonth(
+                position=WeekPosition.FOURTH,
+                weekday=Weekday.SUNDAY,
+            ),
+        ),
+    )
+    assert overlaps_on_date(schedule, selected_date) is True
+
+def test_yearly_nth_weekday_does_not_overlap_wrong_occurrence() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=NthWeekdayOfMonth(
+                position=WeekPosition.FOURTH,
+                weekday=Weekday.SUNDAY,
+            ),
+        ),
+    )
+    assert overlaps_on_date(schedule, date(2026, 8, 16)) is False
+
+def test_yearly_last_weekday_overlaps_selected_occurrence() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=NthWeekdayOfMonth(
+                position=WeekPosition.LAST,
+                weekday=Weekday.SUNDAY,
+            ),
+        ),
+    )
+    assert overlaps_on_date(schedule, date(2026, 8, 30)) is True
+
+def test_yearly_schedule_checks_next_year_when_flight_crosses_midnight() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.JANUARY,),
+            date_selection=SpecificDaysOfMonth(days=(1,)),
+        ),
+    )
+    result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 12, 31, 19, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2027, 1, 1, 16, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+    assert result is True
+
+@pytest.mark.parametrize("every_years", (0, -1))
+def test_yearly_schedule_rejects_non_positive_interval(
+    every_years: int,
+) -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=SpecificDaysOfMonth(days=(15,)),
+            every_years=every_years,
+        ),
+    )
+    with pytest.raises(ValueError, match="every_years"):
+        overlaps_on_date(schedule, date(2026, 8, 15))
+
+def test_yearly_schedule_rejects_empty_month_selection() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(),
+            date_selection=SpecificDaysOfMonth(days=(15,)),
+        ),
+    )
+    with pytest.raises(ValueError, match="months"):
+        overlaps_on_date(schedule, date(2026, 8, 15))
+
+def test_yearly_schedule_rejects_empty_specific_day_selection() -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=SpecificDaysOfMonth(days=()),
+        ),
+    )
+    with pytest.raises(ValueError, match="days"):
+        overlaps_on_date(schedule, date(2026, 8, 15))
+
+@pytest.mark.parametrize("invalid_day", (0, 32))
+def test_yearly_schedule_rejects_invalid_specific_day(
+    invalid_day: int,
+) -> None:
+    schedule = replace(
+        BASE_YEARLY_SCHEDULE,
+        recurrence_pattern=YearlyRepetition(
+            months=(Month.AUGUST,),
+            date_selection=SpecificDaysOfMonth(
+                days=(invalid_day,),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="days"):
+        overlaps_on_date(schedule, date(2026, 8, 15))
