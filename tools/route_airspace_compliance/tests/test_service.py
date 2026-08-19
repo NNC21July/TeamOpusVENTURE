@@ -1,5 +1,10 @@
 from dataclasses import replace
+from datetime import date, time
 from tools.route_airspace_compliance.decision_types import CheckResult, OverallDecision
+from tools.route_airspace_compliance.recurrence_schemas import (
+    DailyRepetition,
+    RecurringSchedule,
+)
 from tools.route_airspace_compliance.service import check_route_airspace_compliance
 from tools.route_airspace_compliance.request_response_schemas import RouteComplianceRequest, Waypoint
 from tools.route_airspace_compliance.tests.fakes import FakeAirspaceClient
@@ -71,6 +76,36 @@ def test_active_nfz_returns_block() -> None:
     assert matched_nfz.nfz_id == ACTIVE_RESTRICTED_NFZ.nfz_id
     assert len(result.violations) == 1
     assert client.queries == [(103.8001, 1.3001)]
+
+
+def test_active_recurring_nfz_returns_block() -> None:
+    recurring_nfz = replace(
+        ACTIVE_RESTRICTED_NFZ,
+        nfz_id="NFZ-RECURRING-ACTIVE",
+        valid_from=None,
+        valid_until=None,
+        recurring_schedule=RecurringSchedule(
+            timezone="Asia/Singapore",
+            effective_from=date(2026, 8, 1),
+            start_time=time(8, 0),
+            end_time=time(11, 0),
+            recurrence_pattern=DailyRepetition(),
+        ),
+    )
+    request = make_valid_request()
+    client = FakeAirspaceClient(nfzs=[recurring_nfz])
+
+    result = check_route_airspace_compliance(
+        request=request,
+        client=client,
+    )
+
+    assert result.decision is OverallDecision.BLOCK
+    assert result.route_clear is False
+    assert result.waypoint_results[0].result is CheckResult.VIOLATION
+    assert result.waypoint_results[0].matched_nfzs[0].nfz_id == (
+        "NFZ-RECURRING-ACTIVE"
+    )
     
 def test_unavailable_nfz_data_returns_unknown() -> None:
     request = make_valid_request()

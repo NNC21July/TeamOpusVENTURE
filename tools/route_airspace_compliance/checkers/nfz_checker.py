@@ -3,6 +3,7 @@ from tools.route_airspace_compliance.client_protocol import AirspaceClient, Airs
 from tools.route_airspace_compliance.request_response_schemas import Waypoint, WaypointCheckResult
 from tools.route_airspace_compliance.decision_types import CheckResult
 from tools.route_airspace_compliance.request_response_schemas import NfzMatch, Waypoint, WaypointCheckResult
+from tools.route_airspace_compliance.checkers.recurrence_checker import recurring_schedule_overlaps
 
 def check_waypoint_against_nfzs(*, waypoint:Waypoint, planned_start_time:datetime, planned_end_time:datetime, client:AirspaceClient) -> WaypointCheckResult:
     try:
@@ -16,21 +17,34 @@ def check_waypoint_against_nfzs(*, waypoint:Waypoint, planned_start_time:datetim
     for nfz in nfzs:
         min_altitude = nfz.minimum_altitude_m
         max_altitude = nfz.maximum_altitude_m
-        valid_from = nfz.valid_from
-        valid_until = nfz.valid_until
-        
-        if (min_altitude is None or max_altitude is None or valid_from is None or valid_until is None):
+        if min_altitude is None or max_altitude is None:
             has_unavailable_data = True
             continue
-        if (valid_from.utcoffset() is None or valid_until.utcoffset() is None):
+        if min_altitude > max_altitude:
             has_unavailable_data = True
             continue
-        if (min_altitude > max_altitude or valid_from > valid_until):
-            has_unavailable_data = True
-            continue
-        
         altitude_conflict = min_altitude <= waypoint.altitude_m <= max_altitude
-        time_conflict = planned_start_time <= valid_until and planned_end_time >= valid_from
+        
+        if nfz.recurring_schedule is not None:
+            try:
+                time_conflict = recurring_schedule_overlaps(schedule=nfz.recurring_schedule, planned_start_time=planned_start_time, planned_end_time=planned_end_time)
+            except (TypeError, ValueError, NotImplementedError):
+                has_unavailable_data = True
+                continue
+        else:
+            valid_from = nfz.valid_from
+            valid_until = nfz.valid_until
+            if valid_from is None or valid_until is None:
+                has_unavailable_data = True
+                continue
+            if (valid_from.utcoffset() is None or valid_until.utcoffset() is None):
+                has_unavailable_data = True
+                continue
+            if valid_from > valid_until:
+                has_unavailable_data = True
+                continue
+            time_conflict = planned_start_time <= valid_until and planned_end_time >= valid_from
+            
         
         if altitude_conflict and time_conflict:
             matches.append(NfzMatch(
