@@ -1,6 +1,8 @@
 from dataclasses import replace
+from datetime import date, time
 from tools.route_airspace_compliance.checkers.nfz_checker import check_waypoint_against_nfzs
 from tools.route_airspace_compliance.decision_types import CheckResult
+from tools.route_airspace_compliance.recurrence_schemas import DailyRepetition, RecurringSchedule
 from tools.route_airspace_compliance.request_response_schemas import Waypoint
 from tools.route_airspace_compliance.tests.fakes import FakeAirspaceClient
 from tools.route_airspace_compliance.tests.fixtures.nfz_responses import ACTIVE_RESTRICTED_NFZ, HIGH_ALTITUDE_NFZ, INACTIVE_RESTRICTED_NFZ, PLANNED_START_TIME, PLANNED_END_TIME
@@ -156,3 +158,98 @@ def test_confirmed_violation_takes_priority_over_incomplete_data() -> None:
     assert result.result is CheckResult.VIOLATION
     assert len(result.matched_nfzs) == 1
     assert result.matched_nfzs[0].nfz_id == "NFZ-001"
+
+
+def test_active_recurring_nfz_is_violation_without_absolute_dates() -> None:
+    recurring_nfz = replace(
+        ACTIVE_RESTRICTED_NFZ,
+        nfz_id="NFZ-RECURRING-ACTIVE",
+        valid_from=None,
+        valid_until=None,
+        recurring_schedule=RecurringSchedule(
+            timezone="Asia/Singapore",
+            effective_from=date(2026, 8, 1),
+            start_time=time(8, 0),
+            end_time=time(11, 0),
+            recurrence_pattern=DailyRepetition(),
+        ),
+    )
+    waypoint = Waypoint(
+        sequence=1,
+        longitude=103.8001,
+        latitude=1.3001,
+        altitude_m=20,
+    )
+    client = FakeAirspaceClient(nfzs=[recurring_nfz])
+
+    result = check_waypoint_against_nfzs(
+        waypoint=waypoint,
+        planned_start_time=PLANNED_START_TIME,
+        planned_end_time=PLANNED_END_TIME,
+        client=client,
+    )
+
+    assert result.result is CheckResult.VIOLATION
+    assert result.matched_nfzs[0].nfz_id == "NFZ-RECURRING-ACTIVE"
+
+
+def test_recurring_schedule_overrides_absolute_time_window() -> None:
+    recurring_nfz = replace(
+        ACTIVE_RESTRICTED_NFZ,
+        nfz_id="NFZ-RECURRING-INACTIVE",
+        recurring_schedule=RecurringSchedule(
+            timezone="Asia/Singapore",
+            effective_from=date(2026, 8, 1),
+            start_time=time(15, 0),
+            end_time=time(18, 0),
+            recurrence_pattern=DailyRepetition(),
+        ),
+    )
+    waypoint = Waypoint(
+        sequence=1,
+        longitude=103.8001,
+        latitude=1.3001,
+        altitude_m=20,
+    )
+    client = FakeAirspaceClient(nfzs=[recurring_nfz])
+
+    result = check_waypoint_against_nfzs(
+        waypoint=waypoint,
+        planned_start_time=PLANNED_START_TIME,
+        planned_end_time=PLANNED_END_TIME,
+        client=client,
+    )
+
+    assert result.result is CheckResult.CLEAR
+    assert result.matched_nfzs == ()
+
+
+def test_invalid_recurring_schedule_returns_unavailable() -> None:
+    recurring_nfz = replace(
+        ACTIVE_RESTRICTED_NFZ,
+        nfz_id="NFZ-RECURRING-INVALID",
+        recurring_schedule=RecurringSchedule(
+            timezone="Not/A-Real-Timezone",
+            effective_from=date(2026, 8, 1),
+            start_time=time(8, 0),
+            end_time=time(11, 0),
+            recurrence_pattern=DailyRepetition(),
+        ),
+    )
+    waypoint = Waypoint(
+        sequence=1,
+        longitude=103.8001,
+        latitude=1.3001,
+        altitude_m=20,
+    )
+    client = FakeAirspaceClient(nfzs=[recurring_nfz])
+
+    result = check_waypoint_against_nfzs(
+        waypoint=waypoint,
+        planned_start_time=PLANNED_START_TIME,
+        planned_end_time=PLANNED_END_TIME,
+        client=client,
+    )
+
+    assert result.result is CheckResult.UNAVAILABLE
+    assert result.matched_nfzs == ()
