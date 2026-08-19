@@ -10,6 +10,7 @@ class Tier(str, Enum):
 
 POLICIES: dict[str, Tier] = {
     "list_drones": Tier.ALLOW,
+    "summarize_flight_inspection": Tier.ALLOW,
     "book_airspace": Tier.REQUIRE_APPROVAL,
     "testing_tool": Tier.REQUIRE_APPROVAL,
     "takeoff": Tier.REQUIRE_APPROVAL

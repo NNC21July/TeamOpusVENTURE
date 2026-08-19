@@ -1,14 +1,25 @@
 """Minimal Garuda Plex REST client.
 
-A thin wrapper over httpx that attaches the bearer token from `auth`, targets the
+A thin wrapper over httpx that attaches the bearer token from `auth`, targets a
 Garuda REST base, understands the standard response envelope, and refreshes the
 token once on a 401. It returns parsed data on success and raises `APIError` on
 failure so callers (the MCP tools) can catch it and return a clean message
 instead of crashing the conversation.
 
-Base URL and the drones endpoint are per the Developer Programme onboarding and
-the shared tool contract. Encapsulation: MCP tools call these helpers and never
+Base URLs and endpoints are per the Developer Programme onboarding and the
+shared tool contract. Encapsulation: MCP tools call these helpers and never
 touch auth or HTTP directly.
+
+Three services are covered here, each with its own base URL:
+  - Aircraft/Fleet Service   (BASE_URL)       — e.g. /aircraft/drones
+  - Media Asset Service      (MEDIA_BASE_URL) — flight media (images/video)
+  - Geo AI Config Service    (GEO_AI_BASE_URL) — ML detections
+
+NOTE: MEDIA_BASE_URL and the flight->media linkage query param are our best
+guess pending confirmation from Garuda (Full_Media.flight_id is deprecated;
+see Research 2). GEO_AI_BASE_URL is taken directly from the Geo AI Config
+Service OAS docs. Both should be double-checked against the live sandbox
+before this is relied on for a demo.
 """
 
 from __future__ import annotations
@@ -20,6 +31,8 @@ import httpx
 import auth
 
 BASE_URL = "https://api.mydronefleets.com"
+MEDIA_BASE_URL = "https://media.mydronefleets.com"
+GEO_AI_BASE_URL = "https://api.mydronefleets.com/airspace"
 _TIMEOUT = 20.0
 
 
@@ -27,18 +40,8 @@ class APIError(Exception):
     """A Garuda API call did not succeed. Message is safe to surface."""
 
 
-def _get(path: str, params: dict[str, Any] | None = None, _retried: bool = False) -> Any:
-    headers = {"Authorization": f"Bearer {auth.get_token()}"}
-    try:
-        response = httpx.get(f"{BASE_URL}{path}", headers=headers, params=params, timeout=_TIMEOUT)
-    except httpx.HTTPError as exc:
-        raise APIError(f"network error calling {path}: {exc}") from exc
-
-    # Token may have expired mid-life; refresh once and retry.
-    if response.status_code == 401 and not _retried:
-        auth.get_token(force_refresh=True)
-        return _get(path, params=params, _retried=True)
-
+def _handle_response(response: httpx.Response, path: str) -> Any:
+    """Shared envelope parsing for both GET and multipart-POST calls."""
     try:
         body = response.json()
     except ValueError:
@@ -59,9 +62,113 @@ def _get(path: str, params: dict[str, Any] | None = None, _retried: bool = False
     raise APIError(f"{path}: unexpected response (HTTP {response.status_code})")
 
 
+def _get(
+    path: str,
+    params: dict[str, Any] | None = None,
+    _retried: bool = False,
+    base_url: str = BASE_URL,
+) -> Any:
+    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    try:
+        response = httpx.get(f"{base_url}{path}", headers=headers, params=params, timeout=_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise APIError(f"network error calling {path}: {exc}") from exc
+
+    # Token may have expired mid-life; refresh once and retry.
+    if response.status_code == 401 and not _retried:
+        auth.get_token(force_refresh=True)
+        return _get(path, params=params, _retried=True, base_url=base_url)
+
+    return _handle_response(response, path)
+
+
+def _post_multipart(
+    path: str,
+    *,
+    files: dict[str, Any],
+    data: dict[str, Any] | None = None,
+    _retried: bool = False,
+    base_url: str = BASE_URL,
+) -> Any:
+    """POST a multipart/form-data request (e.g. an image upload).
+
+    Mirrors `_get`'s auth/retry/envelope handling so callers get the same
+    APIError behaviour regardless of which verb/content-type is used.
+    """
+    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    try:
+        response = httpx.post(
+            f"{base_url}{path}", headers=headers, files=files, data=data, timeout=_TIMEOUT
+        )
+    except httpx.HTTPError as exc:
+        raise APIError(f"network error calling {path}: {exc}") from exc
+
+    if response.status_code == 401 and not _retried:
+        auth.get_token(force_refresh=True)
+        return _post_multipart(path, files=files, data=data, _retried=True, base_url=base_url)
+
+    return _handle_response(response, path)
+
+
 def get_drones(params: dict[str, Any] | None = None) -> Any:
     """GET /aircraft/drones — the fleet's drones. Returns the raw `data` payload."""
     return _get("/aircraft/drones", params=params)
+
+
+def get_media_for_flight(flight_id: str) -> Any:
+    """GET media associated with a flight, via the Media Asset Service.
+
+    UNCONFIRMED: Full_Media.flight_id is documented as deprecated, so the
+    query param / endpoint below is a placeholder pending Garuda confirming
+    the current flight -> media linkage (see Research 2, "Still to Research").
+    Update this once confirmed rather than assuming it works as written.
+    """
+    return _get("/media", params={"flight_id": flight_id}, base_url=MEDIA_BASE_URL)
+
+
+def get_media_bytes(url: str) -> bytes:
+    """Download a media item's raw bytes from its Media Asset Service URL.
+
+    Needed because /ml_detections/upload takes a raw image, not a media_id
+    reference — see Research 2, "Resolved: upload takes raw image, not
+    media_id". This is a plain authenticated fetch, not through `_get`,
+    since the response here is binary, not the standard JSON envelope.
+    """
+    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    try:
+        response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise APIError(f"network error fetching media bytes from {url}: {exc}") from exc
+
+    if response.status_code == 401:
+        headers = {"Authorization": f"Bearer {auth.get_token(force_refresh=True)}"}
+        try:
+            response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
+        except httpx.HTTPError as exc:
+            raise APIError(f"network error fetching media bytes from {url}: {exc}") from exc
+
+    if not response.is_success:
+        raise APIError(f"fetching media bytes failed (HTTP {response.status_code}): {url}")
+    return response.content
+
+
+def create_detections(
+    *, image_bytes: bytes, filename: str, labels: list[str], created_by: str
+) -> Any:
+    """POST /ml_detections/upload — run detection on an image / video freeze frame.
+
+    Only still images are supported per Geo AI's docs (confirmed in Research
+    2) — video needs frame extraction before calling this, which is not yet
+    implemented (see "Still to Research": video frame-sampling approach).
+    """
+    files = {"image": (filename, image_bytes, "application/octet-stream")}
+    data = {"labels": labels, "created_by": created_by}
+    return _post_multipart("/ml_detections/upload", files=files, data=data, base_url=GEO_AI_BASE_URL)
+
+
+def get_detections(params: dict[str, Any] | None = None) -> Any:
+    """GET /ml_detections — query detections that already exist, without re-running inference."""
+    return _get("/ml_detections", params=params, base_url=GEO_AI_BASE_URL)
 
 
 if __name__ == "__main__":

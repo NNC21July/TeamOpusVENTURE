@@ -1,0 +1,91 @@
+import api_client
+from tools.vision_summarizer.client_protocol import DetectionDataUnavailableError
+from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
+from tools.vision_summarizer.request_response_schemas import MediaItem
+import pytest
+
+
+def make_media(media_type="image", url="https://media.mydronefleets.com/files/1.jpg") -> MediaItem:
+    return MediaItem(media_id="MEDIA-1", media_type=media_type, url=url)
+
+
+def test_downloads_bytes_then_uploads_and_parses_detections(monkeypatch):
+    calls = {}
+
+    def fake_get_media_bytes(url):
+        calls["url"] = url
+        return b"fake-image-bytes"
+
+    def fake_create_detections(*, image_bytes, filename, labels, created_by):
+        calls["image_bytes"] = image_bytes
+        calls["filename"] = filename
+        return {
+            "ml_detections": [
+                {
+                    "media_id": "MEDIA-1",
+                    "label": {"shape": "yolo-bbox", "bbox": [0.5, 0.5, 0.1, 0.1], "object": "crack", "score": 0.9},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(api_client, "get_media_bytes", fake_get_media_bytes)
+    monkeypatch.setattr(api_client, "create_detections", fake_create_detections)
+
+    client = GarudaDetectionClient()
+    result = client.get_detections_for_media(media=make_media())
+
+    assert calls["url"] == "https://media.mydronefleets.com/files/1.jpg"
+    assert calls["image_bytes"] == b"fake-image-bytes"
+    assert len(result) == 1
+    assert result[0].object_label == "crack"
+    assert result[0].bbox == (0.5, 0.5, 0.1, 0.1)
+
+
+def test_non_image_media_type_raises_unavailable_without_calling_api():
+    client = GarudaDetectionClient()
+    with pytest.raises(DetectionDataUnavailableError):
+        client.get_detections_for_media(media=make_media(media_type="video"))
+
+
+def test_missing_url_raises_unavailable():
+    client = GarudaDetectionClient()
+    with pytest.raises(DetectionDataUnavailableError):
+        client.get_detections_for_media(media=make_media(url=None))
+
+
+def test_api_error_raises_detection_data_unavailable(monkeypatch):
+    def fake_get_media_bytes(url):
+        raise api_client.APIError("network error")
+
+    monkeypatch.setattr(api_client, "get_media_bytes", fake_get_media_bytes)
+
+    client = GarudaDetectionClient()
+    with pytest.raises(DetectionDataUnavailableError):
+        client.get_detections_for_media(media=make_media())
+
+
+def test_polygon_shape_is_parsed(monkeypatch):
+    monkeypatch.setattr(api_client, "get_media_bytes", lambda url: b"bytes")
+    monkeypatch.setattr(
+        api_client,
+        "create_detections",
+        lambda **kwargs: {
+            "ml_detections": [
+                {
+                    "media_id": "MEDIA-1",
+                    "label": {
+                        "shape": "yolo-poly",
+                        "polygon": [[0.1, 0.1], [0.2, 0.2], [0.2, 0.1]],
+                        "object": "crack",
+                        "score": 0.8,
+                    },
+                }
+            ]
+        },
+    )
+
+    client = GarudaDetectionClient()
+    result = client.get_detections_for_media(media=make_media())
+
+    assert result[0].polygon == ((0.1, 0.1), (0.2, 0.2), (0.2, 0.1))
+    assert result[0].bbox is None
