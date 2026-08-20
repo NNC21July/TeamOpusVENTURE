@@ -1,4 +1,4 @@
-"""Concrete DetectionClient implementation, backed by api_client.py.
+"""Concrete DetectionClient implementation, backed by api_client/rest_client.py.
 
 /ml_detections/upload takes a raw image, not a media_id reference — so this
 first downloads the media's bytes (via its Media Asset Service URL), then
@@ -7,7 +7,7 @@ uploads them to Geo AI. See Research 2, "Resolved: upload takes raw image".
 
 from tools.vision_summarizer.decision_types import DetectionShape
 
-import api_client
+from api_client import rest_client
 from tools.vision_summarizer.client_protocol import DetectionDataUnavailableError
 from tools.vision_summarizer.request_response_schemas import MediaItem, RawDetection
 
@@ -38,14 +38,14 @@ class GarudaDetectionClient:
             raise DetectionDataUnavailableError(f"no fetchable URL for media {media.media_id}")
 
         try:
-            image_bytes = api_client.get_media_bytes(media.url)
-            data = api_client.create_detections(
+            image_bytes = rest_client.get_media_bytes(media.url)
+            data = rest_client.create_detections(
                 image_bytes=image_bytes,
                 filename=f"{media.media_id}.jpg",
                 labels=_DEFAULT_LABELS,
                 created_by=_CREATED_BY,
             )
-        except api_client.APIError as exc:
+        except rest_client.APIError as exc:
             raise DetectionDataUnavailableError(str(exc)) from exc
 
         raw_detections = _extract_detection_list(data)

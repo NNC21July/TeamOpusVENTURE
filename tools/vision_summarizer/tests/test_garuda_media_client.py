@@ -1,4 +1,4 @@
-import api_client
+from api_client import rest_client
 from tools.vision_summarizer.client_protocol import MediaDataUnavailableError
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
 import pytest
@@ -19,7 +19,7 @@ def test_maps_raw_media_list_into_media_items(monkeypatch):
             ]
         }
 
-    monkeypatch.setattr(api_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
@@ -49,7 +49,7 @@ def test_prefers_original_over_lower_res_variants(monkeypatch):
             ]
         }
 
-    monkeypatch.setattr(api_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
@@ -61,7 +61,7 @@ def test_missing_optional_fields_do_not_crash(monkeypatch):
     def fake_get_media_for_flight(flight_id):
         return {"media": [{"media_id": "MEDIA-1", "media_type": "image"}]}
 
-    monkeypatch.setattr(api_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
@@ -73,9 +73,9 @@ def test_missing_optional_fields_do_not_crash(monkeypatch):
 
 def test_api_error_raises_media_data_unavailable(monkeypatch):
     def fake_get_media_for_flight(flight_id):
-        raise api_client.APIError("service down")
+        raise rest_client.APIError("service down")
 
-    monkeypatch.setattr(api_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
 
     client = GarudaMediaClient()
     with pytest.raises(MediaDataUnavailableError):
