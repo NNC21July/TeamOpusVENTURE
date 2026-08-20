@@ -114,6 +114,10 @@ def get_drones(params: dict[str, Any] | None = None) -> Any:
     """GET /aircraft/drones — the fleet's drones. Returns the raw `data` payload."""
     return _get("/aircraft/drones", params=params)
 
+def get_nfzs(params: dict[str, Any] | None = None) -> Any:
+    """GET /airspace/nfzs — the fleet's NFZs. Returns the raw `data` payload."""
+    return _get("/airspace/nfzs", params=params)
+
 
 def get_media_for_flight(flight_id: str) -> Any:
     """GET media associated with a flight, via the Media Asset Service.
