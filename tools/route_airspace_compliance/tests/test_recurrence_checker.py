@@ -1,10 +1,11 @@
 import pytest
 from dataclasses import replace
-from datetime import date, datetime, time
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from tools.route_airspace_compliance.checkers.recurrence_checker import recurring_schedule_overlaps
 from tools.route_airspace_compliance.recurrence_schemas import (
     DailyRepetition,
+    HourlyRepetition,
     Month,
     MonthlyRepetition,
     NthWeekdayOfMonth,
@@ -18,19 +19,48 @@ from tools.route_airspace_compliance.recurrence_schemas import (
 
 SINGAPORE_TIMEZONE = ZoneInfo("Asia/Singapore")
 
+
+def singapore_end_of_day(year: int, month: int, day: int) -> datetime:
+    return datetime(
+        year,
+        month,
+        day,
+        23,
+        59,
+        59,
+        999999,
+        tzinfo=SINGAPORE_TIMEZONE,
+    )
+
+
+BASE_HOURLY_SCHEDULE = RecurringSchedule(
+    timezone="Asia/Singapore",
+    effective_from=datetime(
+        2026, 8, 18, 15, 0,
+        tzinfo=SINGAPORE_TIMEZONE,
+    ),
+    duration=timedelta(minutes=30),
+    recurrence_pattern=HourlyRepetition(),
+    effective_until=singapore_end_of_day(2026, 8, 19),
+)
+
 BASE_DAILY_SCHEDULE = RecurringSchedule(
     timezone="Asia/Singapore",
-    effective_from=date(2026, 8, 1),
-    start_time=time(15, 0),
-    end_time=time(18, 0),
+    effective_from=datetime(
+        2026, 8, 1, 15, 0,
+        tzinfo=SINGAPORE_TIMEZONE,
+    ),
+    duration=timedelta(hours=3),
     recurrence_pattern=DailyRepetition(),
 )
 
 BASE_WEEKLY_SCHEDULE = RecurringSchedule(
     timezone="Asia/Singapore",
-    effective_from=date(2026, 8, 3),
-    start_time=time(15, 0),
-    end_time=time(18, 0),
+    effective_from=datetime(
+        2026, 8, 3, 15, 0,
+        tzinfo=SINGAPORE_TIMEZONE,
+    ),
+    duration=timedelta(hours=3),
     recurrence_pattern=WeeklyRepetition(
         days_of_week=(
             Weekday.MONDAY,
@@ -42,9 +72,11 @@ BASE_WEEKLY_SCHEDULE = RecurringSchedule(
 
 BASE_MONTHLY_SCHEDULE = RecurringSchedule(
     timezone="Asia/Singapore",
-    effective_from=date(2026, 1, 1),
-    start_time=time(15, 0),
-    end_time=time(18, 0),
+    effective_from=datetime(
+        2026, 1, 1, 15, 0,
+        tzinfo=SINGAPORE_TIMEZONE,
+    ),
+    duration=timedelta(hours=3),
     recurrence_pattern=MonthlyRepetition(
         date_selection=SpecificDaysOfMonth(
             days=(18, 21, 23),
@@ -54,9 +86,11 @@ BASE_MONTHLY_SCHEDULE = RecurringSchedule(
 
 BASE_YEARLY_SCHEDULE = RecurringSchedule(
     timezone="Asia/Singapore",
-    effective_from=date(2026, 1, 1),
-    start_time=time(15, 0),
-    end_time=time(18, 0),
+    effective_from=datetime(
+        2026, 1, 1, 15, 0,
+        tzinfo=SINGAPORE_TIMEZONE,
+    ),
+    duration=timedelta(hours=3),
     recurrence_pattern=YearlyRepetition(
         months=(Month.AUGUST, Month.OCTOBER),
         date_selection=SpecificDaysOfMonth(
@@ -107,13 +141,157 @@ def overlaps_on_date(
         ),
     )
 
+
+def test_hourly_schedule_overlaps_during_repeated_active_window() -> None:
+    result = recurring_schedule_overlaps(
+        schedule=BASE_HOURLY_SCHEDULE,
+        planned_start_time=datetime(
+            2026, 8, 18, 16, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 18, 16, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is True
+
+
+def test_hourly_schedule_does_not_overlap_between_active_windows() -> None:
+    result = recurring_schedule_overlaps(
+        schedule=BASE_HOURLY_SCHEDULE,
+        planned_start_time=datetime(
+            2026, 8, 18, 16, 35,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 18, 16, 50,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is False
+
+
+def test_hourly_schedule_respects_every_hours_interval() -> None:
+    schedule = replace(
+        BASE_HOURLY_SCHEDULE,
+        recurrence_pattern=HourlyRepetition(every_hours=2),
+    )
+
+    inactive_result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 18, 16, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 18, 16, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+    active_result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 18, 17, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 18, 17, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert inactive_result is False
+    assert active_result is True
+
+
+def test_hourly_schedule_continues_repeating_after_midnight() -> None:
+    result = recurring_schedule_overlaps(
+        schedule=BASE_HOURLY_SCHEDULE,
+        planned_start_time=datetime(
+            2026, 8, 19, 0, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 19, 0, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is True
+
+
+def test_hourly_schedule_does_not_activate_on_excluded_date() -> None:
+    schedule = replace(
+        BASE_HOURLY_SCHEDULE,
+        excluded_dates=(date(2026, 8, 19),),
+    )
+
+    result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 19, 16, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 19, 16, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is False
+
+
+def test_hourly_schedule_does_not_activate_after_effective_until() -> None:
+    result = recurring_schedule_overlaps(
+        schedule=BASE_HOURLY_SCHEDULE,
+        planned_start_time=datetime(
+            2026, 8, 20, 16, 10,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 20, 16, 20,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is False
+
+
+@pytest.mark.parametrize("every_hours", [0, -1])
+def test_hourly_schedule_rejects_invalid_interval(every_hours: int) -> None:
+    schedule = replace(
+        BASE_HOURLY_SCHEDULE,
+        recurrence_pattern=HourlyRepetition(every_hours=every_hours),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="every_hours must be at least 1",
+    ):
+        recurring_schedule_overlaps(
+            schedule=schedule,
+            planned_start_time=datetime(
+                2026, 8, 18, 16, 10,
+                tzinfo=SINGAPORE_TIMEZONE,
+            ),
+            planned_end_time=datetime(
+                2026, 8, 18, 16, 20,
+                tzinfo=SINGAPORE_TIMEZONE,
+            ),
+        )
+
 def test_daily_schedule_overlaps_flight_during_active_hours() -> None:
     singapore_timezone = ZoneInfo("Asia/Singapore")
     schedule = RecurringSchedule(
         timezone="Asia/Singapore",
-        effective_from=date(2026, 8, 1),
-        start_time=time(15, 0),
-        end_time=time(18, 0),
+        effective_from=datetime(
+            2026, 8, 1, 15, 0,
+            tzinfo=singapore_timezone,
+        ),
+        duration=timedelta(hours=3),
         recurrence_pattern=DailyRepetition(),
     )
     result = recurring_schedule_overlaps(
@@ -133,9 +311,11 @@ def test_daily_schedule_checks_next_day_when_flight_crosses_midnight() -> None:
     singapore_timezone = ZoneInfo("Asia/Singapore")
     schedule = RecurringSchedule(
         timezone="Asia/Singapore",
-        effective_from=date(2026, 8, 1),
-        start_time=time(15, 0),
-        end_time=time(18, 0),
+        effective_from=datetime(
+            2026, 8, 1, 15, 0,
+            tzinfo=singapore_timezone,
+        ),
+        duration=timedelta(hours=3),
         recurrence_pattern=DailyRepetition(),
     )
     result = recurring_schedule_overlaps(
@@ -155,9 +335,11 @@ def test_daily_schedule_does_not_overlap_outside_active_hours() -> None:
     singapore_timezone = ZoneInfo("Asia/Singapore")
     schedule = RecurringSchedule(
         timezone="Asia/Singapore",
-        effective_from=date(2026, 8, 1),
-        start_time=time(15, 0),
-        end_time=time(18, 0),
+        effective_from=datetime(
+            2026, 8, 1, 15, 0,
+            tzinfo=singapore_timezone,
+        ),
+        duration=timedelta(hours=3),
         recurrence_pattern=DailyRepetition(),
     )
     result = recurring_schedule_overlaps(
@@ -177,9 +359,11 @@ def test_daily_schedule_respects_every_days_interval() -> None:
     singapore_timezone = ZoneInfo("Asia/Singapore")
     schedule = RecurringSchedule(
         timezone="Asia/Singapore",
-        effective_from=date(2026, 8, 1),
-        start_time=time(15, 0),
-        end_time=time(18, 0),
+        effective_from=datetime(
+            2026, 8, 1, 15, 0,
+            tzinfo=singapore_timezone,
+        ),
+        duration=timedelta(hours=3),
         recurrence_pattern=DailyRepetition(every_days=2),
     )
     active_result = recurring_schedule_overlaps(
@@ -211,9 +395,11 @@ def test_daily_schedule_does_not_activate_on_excluded_date() -> None:
     singapore_timezone = ZoneInfo("Asia/Singapore")
     schedule = RecurringSchedule(
         timezone="Asia/Singapore",
-        effective_from=date(2026, 8, 1),
-        start_time=time(15, 0),
-        end_time=time(18, 0),
+        effective_from=datetime(
+            2026, 8, 1, 15, 0,
+            tzinfo=singapore_timezone,
+        ),
+        duration=timedelta(hours=3),
         recurrence_pattern=DailyRepetition(),
         excluded_dates=(date(2026, 8, 15),),
     )
@@ -233,13 +419,77 @@ def test_daily_schedule_does_not_activate_on_excluded_date() -> None:
 def test_daily_schedule_respects_effective_date_range() -> None:
     schedule = replace(
         BASE_DAILY_SCHEDULE,
-        effective_from=date(2026, 8, 10),
-        effective_until=date(2026, 8, 20),
+        effective_from=datetime(
+            2026, 8, 10, 15, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        effective_until=singapore_end_of_day(2026, 8, 20),
     )
     assert overlaps_on_august_day(schedule, 9) is False
     assert overlaps_on_august_day(schedule, 10) is True
     assert overlaps_on_august_day(schedule, 20) is True
     assert overlaps_on_august_day(schedule, 21) is False
+
+
+def test_daily_schedule_detects_occurrence_that_continues_past_midnight() -> None:
+    schedule = replace(
+        BASE_DAILY_SCHEDULE,
+        effective_from=datetime(
+            2026, 8, 15, 22, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        duration=timedelta(hours=4),
+    )
+
+    result = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 16, 1, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 16, 1, 30,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert result is True
+
+
+def test_exact_effective_until_shortens_final_occurrence() -> None:
+    schedule = replace(
+        BASE_DAILY_SCHEDULE,
+        effective_until=datetime(
+            2026, 8, 15, 16, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    before_cutoff = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 15, 15, 30,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 15, 15, 45,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+    after_cutoff = recurring_schedule_overlaps(
+        schedule=schedule,
+        planned_start_time=datetime(
+            2026, 8, 15, 16, 30,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        planned_end_time=datetime(
+            2026, 8, 15, 17, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+    )
+
+    assert before_cutoff is True
+    assert after_cutoff is False
     
 def test_daily_schedule_treats_touching_boundaries_as_overlap() -> None:
     ends_when_nfz_starts = overlaps_on_august_day(
@@ -282,13 +532,12 @@ def test_daily_schedule_rejects_non_positive_interval() -> None:
     with pytest.raises(ValueError, match="every_days"):
         overlaps_on_august_day(schedule, 15)
 
-def test_daily_schedule_rejects_empty_activation_window() -> None:
+def test_daily_schedule_rejects_non_positive_duration() -> None:
     schedule = replace(
         BASE_DAILY_SCHEDULE,
-        start_time=time(18, 0),
-        end_time=time(18, 0),
+        duration=timedelta(0),
     )
-    with pytest.raises(ValueError, match="Overnight recurring schedules",):
+    with pytest.raises(ValueError, match="duration"):
         overlaps_on_august_day(schedule, 15)
         
 def test_daily_schedule_rejects_unknown_timezone() -> None:
@@ -328,8 +577,11 @@ def test_daily_schedule_rejects_reversed_flight_window() -> None:
 def test_daily_schedule_rejects_reversed_effective_range() -> None:
     schedule = replace(
         BASE_DAILY_SCHEDULE,
-        effective_from=date(2026, 8, 20),
-        effective_until=date(2026, 8, 10),
+        effective_from=datetime(
+            2026, 8, 20, 15, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        effective_until=singapore_end_of_day(2026, 8, 10),
     )
     with pytest.raises(ValueError, match="effective_until"):
         overlaps_on_august_day(schedule, 15)
@@ -386,7 +638,7 @@ def test_weekly_schedule_does_not_activate_on_excluded_date() -> None:
 def test_weekly_schedule_respects_effective_until_date() -> None:
     schedule = replace(
         BASE_WEEKLY_SCHEDULE,
-        effective_until=date(2026, 8, 5),
+        effective_until=singapore_end_of_day(2026, 8, 5),
     )
     assert overlaps_on_august_day(schedule, day=5) is True
     assert overlaps_on_august_day(schedule, day=7) is False
@@ -395,8 +647,11 @@ def test_weekly_schedule_uses_weekday_in_schedule_timezone() -> None:
     utc_timezone = ZoneInfo("UTC")
     schedule = replace(
         BASE_WEEKLY_SCHEDULE,
-        start_time=time(1, 0),
-        end_time=time(3, 0),
+        effective_from=datetime(
+            2026, 8, 3, 1, 0,
+            tzinfo=SINGAPORE_TIMEZONE,
+        ),
+        duration=timedelta(hours=2),
         recurrence_pattern=WeeklyRepetition(
             days_of_week=(Weekday.MONDAY,),
         ),
