@@ -28,7 +28,25 @@ def _dict_to_request(d: dict) -> Request:
 def _load_requests() -> dict[str, Request]:
     if not REQUESTS_FILE.exists():
         return {}
-    raw = json.loads(REQUESTS_FILE.read_text())
+
+    text = REQUESTS_FILE.read_text().strip()
+    if not text:
+        # A zero-byte file just means "nothing recorded yet" (the file can be
+        # created before anything is written). Treat it as an empty store.
+        return {}
+
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # Do NOT fall back to an empty store here: carrying on would let the
+        # next save overwrite whatever is in the file, silently discarding
+        # pending and approved requests. Refusing means nothing executes until
+        # a human looks at it, which is the safe direction to fail.
+        raise ValueError(
+            f"{REQUESTS_FILE} is not valid JSON ({exc}). Refusing to continue "
+            "so that existing approvals are not overwritten."
+        ) from exc
+
     return {rid: _dict_to_request(d) for rid, d in raw.items()}
 
 def _save_requests(requests: dict[str, Request]) -> None:
@@ -71,34 +89,38 @@ def create_request(tool: str, params: dict) -> Request:
     return request
 
 
-def approve(request_id: str, pilot_id: str) -> None:
+def approve(request_id: str, pilot_id: str) -> Request:
     requests = _load_requests()
     request = requests.get(request_id)
 
     if request is None:
         raise ValueError(f"Request {request_id} not found")
     if request.status != RequestStatus.PENDING:
-        raise ValueError(f"Request {request_id} is {request.status}, not PENDING")
+        raise ValueError(f"Request {request_id} is {request.status.value}, not PENDING")
 
     request.status = RequestStatus.APPROVED
     request.pilot_id = pilot_id
     request.decided_at = datetime.now()
     _save_requests(requests)
 
+    return request
 
-def deny(request_id: str, pilot_id: str) -> None:
+
+def deny(request_id: str, pilot_id: str) -> Request:
     requests = _load_requests()
     request = requests.get(request_id)
 
     if request is None:
         raise ValueError(f"Request {request_id} not found")
     if request.status != RequestStatus.PENDING:
-        raise ValueError(f"Request {request_id} is {request.status}, not PENDING")
+        raise ValueError(f"Request {request_id} is {request.status.value}, not PENDING")
 
     request.status = RequestStatus.DENIED
     request.pilot_id = pilot_id
     request.decided_at = datetime.now()
     _save_requests(requests)
+
+    return request
 
 
 def consume(request_id: str, tool: str, params: dict) -> Request:
@@ -108,7 +130,7 @@ def consume(request_id: str, tool: str, params: dict) -> Request:
     if request is None:
         raise ValueError(f"Request {request_id} not found")
     if request.status != RequestStatus.APPROVED:
-        raise ValueError(f"Request {request_id} is {request.status}, not APPROVED")
+        raise ValueError(f"Request {request_id} is {request.status.value}, not APPROVED")
     if request.params_hash != hash_params(tool, params):
         raise ValueError(f"Request {request_id} params do not match this call")
 
