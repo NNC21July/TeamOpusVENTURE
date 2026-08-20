@@ -1,4 +1,4 @@
-import api_client
+from api_client import rest_client
 from tools.vision_summarizer.client_protocol import DetectionDataUnavailableError
 from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
 from tools.vision_summarizer.request_response_schemas import MediaItem
@@ -28,8 +28,8 @@ def test_downloads_bytes_then_uploads_and_parses_detections(monkeypatch):
             ]
         }
 
-    monkeypatch.setattr(api_client, "get_media_bytes", fake_get_media_bytes)
-    monkeypatch.setattr(api_client, "create_detections", fake_create_detections)
+    monkeypatch.setattr(rest_client, "get_media_bytes", fake_get_media_bytes)
+    monkeypatch.setattr(rest_client, "create_detections", fake_create_detections)
 
     client = GarudaDetectionClient()
     result = client.get_detections_for_media(media=make_media())
@@ -55,9 +55,9 @@ def test_missing_url_raises_unavailable():
 
 def test_api_error_raises_detection_data_unavailable(monkeypatch):
     def fake_get_media_bytes(url):
-        raise api_client.APIError("network error")
+        raise rest_client.APIError("network error")
 
-    monkeypatch.setattr(api_client, "get_media_bytes", fake_get_media_bytes)
+    monkeypatch.setattr(rest_client, "get_media_bytes", fake_get_media_bytes)
 
     client = GarudaDetectionClient()
     with pytest.raises(DetectionDataUnavailableError):
@@ -65,9 +65,9 @@ def test_api_error_raises_detection_data_unavailable(monkeypatch):
 
 
 def test_polygon_shape_is_parsed(monkeypatch):
-    monkeypatch.setattr(api_client, "get_media_bytes", lambda url: b"bytes")
+    monkeypatch.setattr(rest_client, "get_media_bytes", lambda url: b"bytes")
     monkeypatch.setattr(
-        api_client,
+        rest_client,
         "create_detections",
         lambda **kwargs: {
             "ml_detections": [
