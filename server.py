@@ -1,6 +1,6 @@
 from mcp.server.fastmcp.server import FastMCP
 
-import api_client
+from api_client import rest_client
 from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
 from tools.vision_summarizer.request_response_schemas import SummarizeFlightRequest
@@ -53,8 +53,8 @@ def list_drones() -> dict:
     fleet data and changes nothing.
     """
     try:
-        data = api_client.get_drones()
-    except api_client.APIError as exc:
+        data = rest_client.get_drones()
+    except rest_client.APIError as exc:
         return {"error": str(exc)}
     return _shape_drones(data)
 

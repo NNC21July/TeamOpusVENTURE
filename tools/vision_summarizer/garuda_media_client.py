@@ -1,13 +1,13 @@
-"""Concrete MediaClient implementation, backed by api_client.py.
+"""Concrete MediaClient implementation, backed by api_client/rest_client.py.
 
 Kept separate from client_protocol.py (which only defines the interface) so
-the service layer / tests never need to import api_client or httpx directly —
-matches the encapsulation pattern api_client.py itself documents.
+the service layer / tests never need to import the REST client or httpx
+directly — matches the encapsulation pattern rest_client.py documents.
 """
 
 from datetime import datetime
 
-import api_client
+from api_client import rest_client
 from tools.vision_summarizer.client_protocol import MediaDataUnavailableError
 from tools.vision_summarizer.request_response_schemas import MediaItem
 
@@ -15,8 +15,8 @@ from tools.vision_summarizer.request_response_schemas import MediaItem
 class GarudaMediaClient:
     def get_media_for_flight(self, *, flight_id: str) -> list[MediaItem]:
         try:
-            data = api_client.get_media_for_flight(flight_id)
-        except api_client.APIError as exc:
+            data = rest_client.get_media_for_flight(flight_id)
+        except rest_client.APIError as exc:
             raise MediaDataUnavailableError(str(exc)) from exc
 
         raw_items = _extract_media_list(data)
