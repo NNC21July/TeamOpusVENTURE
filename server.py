@@ -5,6 +5,10 @@ from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClien
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
 from tools.vision_summarizer.request_response_schemas import SummarizeFlightRequest
 from tools.vision_summarizer.service import summarize_flight
+from tools.route_airspace_compliance.garuda_airspace_client import GarudaAirspaceClient
+from tools.route_airspace_compliance.output_shaper import shape_route_compliance_response
+from tools.route_airspace_compliance.request_response_schemas import RouteComplianceRequest
+from tools.route_airspace_compliance.service import check_route_airspace_compliance as evaluate_route_airspace_compliance
 
 mcp = FastMCP("Team-Opus MCP Server")
 
@@ -12,7 +16,8 @@ mcp = FastMCP("Team-Opus MCP Server")
 # (created_by / last_modified_by), internal ids (company_id / provider_id),
 # and the free-text `properties` blob — data minimization plus keeping an
 # untrusted free-text field out of the model's view.
-_DRONE_FIELDS = ("name", "serial_number", "drone_model_id", "status", "serviceable", "drone_id")
+_DRONE_FIELDS = ("name", "serial_number", "drone_model_id",
+                 "status", "serviceable", "drone_id")
 
 
 def _shape_drones(data: object) -> dict:
@@ -116,6 +121,24 @@ def summarize_flight_inspection(flight_id: str, focus: str | None = None) -> dic
         detection_client=GarudaDetectionClient(),
     )
     return _shape_summary(response)
+
+
+@mcp.tool()
+def check_route_airspace_compliance(request: RouteComplianceRequest) -> dict:
+    """
+    Check whether a proposed drone route conflicts with active no-fly zones.
+
+    Provide the ordered route waypoints and the planned flight start and end
+    times. Timestamps must include a timezone. The result states whether the
+    route passes, is blocked, needs more information, or could not be checked.
+
+    This tool is read-only. It does not create reservations, book airspace,
+    modify a flight plan, or control a drone. FRZ checking is not implemented
+    yet, so providing an frz_id may produce an UNKNOWN decision.
+    """
+    response = evaluate_route_airspace_compliance(
+        request=request, client=GarudaAirspaceClient())
+    return shape_route_compliance_response(response)
 
 
 if __name__ == "__main__":
