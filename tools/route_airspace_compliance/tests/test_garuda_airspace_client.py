@@ -7,6 +7,17 @@ from api_client import rest_client
 from tools.route_airspace_compliance.client_protocol import (
     AirspaceDataUnavailableError,
 )
+from tools.route_airspace_compliance.decision_types import (
+    CheckResult,
+    OverallDecision,
+)
+from tools.route_airspace_compliance.request_response_schemas import (
+    RouteComplianceRequest,
+    Waypoint,
+)
+from tools.route_airspace_compliance.service import (
+    check_route_airspace_compliance,
+)
 
 garuda_client_module = pytest.importorskip(
     "tools.route_airspace_compliance.garuda_airspace_client",
@@ -85,3 +96,168 @@ def test_missing_nfz_list_becomes_airspace_data_unavailable(monkeypatch) -> None
         match="unexpected response format",
     ):
         client.query_nfzs(longitude=103.8, latitude=1.3)
+
+
+def test_nfz_without_validity_becomes_airspace_data_unavailable(
+    monkeypatch,
+) -> None:
+    def fake_get_nfzs(
+        params: dict[str, Any] | None = None,
+    ) -> dict:
+        return {
+            "nfzs": [
+                {
+                    "nfz_id": "GARUDA-NFZ-BROKEN-001",
+                    "name": "NFZ with missing validity",
+                    "restriction": "aerodrome",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        rest_client,
+        "get_nfzs",
+        fake_get_nfzs,
+    )
+
+    client = GarudaAirspaceClient()
+
+    with pytest.raises(
+        AirspaceDataUnavailableError,
+        match="invalid NFZ data",
+    ):
+        client.query_nfzs(
+            longitude=103.8,
+            latitude=1.3,
+        )
+
+
+def test_non_dictionary_nfz_becomes_airspace_data_unavailable(
+    monkeypatch,
+) -> None:
+    def fake_get_nfzs(
+        params: dict[str, Any] | None = None,
+    ) -> dict:
+        return {
+            "nfzs": ["this should have been an NFZ object"],
+        }
+
+    monkeypatch.setattr(
+        rest_client,
+        "get_nfzs",
+        fake_get_nfzs,
+    )
+
+    client = GarudaAirspaceClient()
+
+    with pytest.raises(
+        AirspaceDataUnavailableError,
+        match="invalid NFZ data",
+    ):
+        client.query_nfzs(
+            longitude=103.8,
+            latitude=1.3,
+        )
+
+
+def test_nfz_with_invalid_timestamp_becomes_airspace_data_unavailable(
+    monkeypatch,
+) -> None:
+    def fake_get_nfzs(
+        params: dict[str, Any] | None = None,
+    ) -> dict:
+        return {
+            "nfzs": [
+                {
+                    "nfz_id": "GARUDA-NFZ-BROKEN-002",
+                    "name": "NFZ with an invalid timestamp",
+                    "restriction": "aerodrome",
+                    "validity": [
+                        {
+                            "start_on": "not-a-timestamp",
+                            "end_on": 1787216400000,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        rest_client,
+        "get_nfzs",
+        fake_get_nfzs,
+    )
+
+    client = GarudaAirspaceClient()
+
+    with pytest.raises(
+        AirspaceDataUnavailableError,
+        match="invalid NFZ data",
+    ):
+        client.query_nfzs(
+            longitude=103.8,
+            latitude=1.3,
+        )
+
+
+def test_malformed_garuda_data_makes_route_decision_unknown(
+    monkeypatch,
+) -> None:
+    def fake_get_nfzs(
+        params: dict[str, Any] | None = None,
+    ) -> dict:
+        return {
+            "nfzs": [
+                {
+                    "nfz_id": "GARUDA-NFZ-BROKEN-003",
+                    "name": "NFZ with missing validity",
+                    "restriction": "aerodrome",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        rest_client,
+        "get_nfzs",
+        fake_get_nfzs,
+    )
+
+    request = RouteComplianceRequest(
+        waypoints=[
+            Waypoint(
+                sequence=1,
+                longitude=103.8,
+                latitude=1.3,
+                altitude_m=30,
+            )
+        ],
+        planned_start_time=datetime(
+            2026,
+            8,
+            23,
+            7,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        planned_end_time=datetime(
+            2026,
+            8,
+            23,
+            8,
+            0,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    result = check_route_airspace_compliance(
+        request=request,
+        client=GarudaAirspaceClient(),
+    )
+
+    assert result.decision is OverallDecision.UNKNOWN
+    assert result.route_clear is False
+    assert len(result.waypoint_results) == 1
+    assert result.waypoint_results[0].result is CheckResult.UNAVAILABLE
+    assert result.required_actions == (
+        "Retry when all required airspace data is available",
+    )
