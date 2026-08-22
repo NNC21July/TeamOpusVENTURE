@@ -15,11 +15,14 @@ Three services are covered here, each with its own base URL:
   - Media Asset Service      (MEDIA_BASE_URL) — flight media (images/video)
   - Geo AI Config Service    (GEO_AI_BASE_URL) — ML detections
 
-NOTE: MEDIA_BASE_URL and the flight->media linkage query param are our best
-guess pending confirmation from Garuda (Full_Media.flight_id is deprecated;
-see Research 2). GEO_AI_BASE_URL is taken directly from the Geo AI Config
-Service OAS docs. Both should be double-checked against the live sandbox
-before this is relied on for a demo.
+NOTE (updated 2026-08-21, after probing the live sandbox):
+  - MEDIA_BASE_URL is NOT where media lives. Every path on that host 404s
+    except /sanity. Media retrieval is on BASE_URL: /media/{media_id} works.
+    The constant is kept only in case get_media_bytes needs it for asset URLs.
+  - The flight -> media linkage is still unresolved. See get_media_for_flight
+    for exactly what was probed and the question to put to Garuda.
+  - GEO_AI_BASE_URL is from the Geo AI Config Service OAS docs, still
+    unverified against the sandbox.
 """
 
 from __future__ import annotations
@@ -130,16 +133,18 @@ def get_nfzs(params: dict[str, Any] | None = None) -> Any:
     """GET /airspace/nfzs — the fleet's NFZs. Returns the raw `data` payload."""
     return _get("/airspace/nfzs", params=params)
 
+def get_flights(params: dict[str, Any] | None = None) -> Any:
+    """GET /aircraft/flights — recorded flights. Returns the raw `data` payload."""
+    return _get("/aircraft/flights", params=params)
+
+
+def get_media_by_id(media_id: str) -> Any:
+    """GET /media/{media_id} — one media item's metadata. CONFIRMED working."""
+    return _get(f"/media/{media_id}")
+
 
 def get_media_for_flight(flight_id: str) -> Any:
-    """GET media associated with a flight, via the Media Asset Service.
-
-    UNCONFIRMED: Full_Media.flight_id is documented as deprecated, so the
-    query param / endpoint below is a placeholder pending Garuda confirming
-    the current flight -> media linkage (see Research 2, "Still to Research").
-    Update this once confirmed rather than assuming it works as written.
-    """
-    return _get("/media", params={"flight_id": flight_id}, base_url=MEDIA_BASE_URL)
+    return _get("/media", params={"flight_id": flight_id})
 
 
 def get_media_bytes(url: str) -> bytes:

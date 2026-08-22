@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from mcp.server.fastmcp.server import FastMCP
 
 from api_client import rest_client
@@ -59,6 +61,64 @@ def list_drones() -> dict:
     except rest_client.APIError as exc:
         return {"error": str(exc)}
     return _shape_drones(data)
+
+
+def _shape_flights(data: object) -> dict:
+    """Trim the raw /aircraft/flights payload to what identifies a flight.
+
+    Deliberately drops `pilots` (real names and usernames — personal data that
+    must not reach the model or the logs) and `location` (free text we do not
+    neutralise yet, and it carries no useful value in the sandbox).
+    """
+    flights = data.get("flights", []) if isinstance(data, dict) else data
+    if not isinstance(flights, list):
+        flights = []
+
+    trimmed = []
+    for flight in flights:
+        if not isinstance(flight, dict):
+            continue
+        # `date` is epoch milliseconds, or -1 when the flight has no date set.
+        raw_date = flight.get("date")
+        flown_on = None
+        if isinstance(raw_date, (int, float)) and raw_date > 0:
+            flown_on = datetime.fromtimestamp(raw_date / 1000).isoformat(timespec="seconds")
+
+        # `duration` is split across hours/minutes/seconds, and the keys vary.
+        # Sum it here rather than leaving the model to do arithmetic.
+        duration = flight.get("duration") or {}
+        duration_s = (
+            (duration.get("hours") or 0) * 3600
+            + (duration.get("minutes") or 0) * 60
+            + (duration.get("seconds") or 0)
+        ) if isinstance(duration, dict) else None
+
+        trimmed.append({
+            "flight_id": flight.get("flight_id"),
+            "status": flight.get("status"),
+            "drone_name": (flight.get("drone") or {}).get("name"),
+            "flown_on": flown_on,
+            "duration_seconds": duration_s,
+        })
+    return {"count": len(trimmed), "flights": trimmed}
+
+
+@mcp.tool()
+def list_flights() -> dict:
+    """
+    List recorded flights, most useful for finding a flight_id.
+
+    Use this to answer "what flights do we have?", "which flights has Sim Drone A
+    made?", or to find the flight_id needed by summarize_flight_inspection.
+    Returns each flight's id, status (preflight/flying/postflight), the drone that
+    flew it, when it flew, and how long it lasted. Read-only: it only reads flight
+    records and changes nothing.
+    """
+    try:
+        data = rest_client.get_flights()
+    except rest_client.APIError as exc:
+        return {"error": str(exc)}
+    return _shape_flights(data)
 
 
 def _shape_summary(response) -> dict:

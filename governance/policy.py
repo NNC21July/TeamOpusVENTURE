@@ -12,6 +12,7 @@ POLICIES: dict[str, Tier] = {
     # Read-only: safe to call freely.
     "list_drones": Tier.ALLOW,
     "summarize_flight_inspection": Tier.ALLOW,
+    "list_flights": Tier.ALLOW,
     
     # State-changing: a pilot must approve before these run.
     "testing_tool": Tier.REQUIRE_APPROVAL,

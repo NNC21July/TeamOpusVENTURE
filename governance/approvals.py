@@ -30,9 +30,7 @@ def _load_requests() -> dict[str, Request]:
         return {}
 
     text = REQUESTS_FILE.read_text().strip()
-    if not text:
-        # A zero-byte file just means "nothing recorded yet" (the file can be
-        # created before anything is written). Treat it as an empty store.
+    if not text: # to account for case when the file has zero bytes 
         return {}
 
     try:
