@@ -15,11 +15,14 @@ Three services are covered here, each with its own base URL:
   - Media Asset Service      (MEDIA_BASE_URL) — flight media (images/video)
   - Geo AI Config Service    (GEO_AI_BASE_URL) — ML detections
 
-NOTE: MEDIA_BASE_URL and the flight->media linkage query param are our best
-guess pending confirmation from Garuda (Full_Media.flight_id is deprecated;
-see Research 2). GEO_AI_BASE_URL is taken directly from the Geo AI Config
-Service OAS docs. Both should be double-checked against the live sandbox
-before this is relied on for a demo.
+NOTE (updated 2026-08-21, after probing the live sandbox):
+  - MEDIA_BASE_URL is NOT where media lives. Every path on that host 404s
+    except /sanity. Media retrieval is on BASE_URL: /media/{media_id} works.
+    The constant is kept only in case get_media_bytes needs it for asset URLs.
+  - The flight -> media linkage is still unresolved. See get_media_for_flight
+    for exactly what was probed and the question to put to Garuda.
+  - GEO_AI_BASE_URL is from the Geo AI Config Service OAS docs, still
+    unverified against the sandbox.
 """
 
 from __future__ import annotations
@@ -62,13 +65,25 @@ def _handle_response(response: httpx.Response, path: str) -> Any:
     raise APIError(f"{path}: unexpected response (HTTP {response.status_code})")
 
 
+def _token() -> str:
+    """Fetch the bearer token, surfacing auth failures as APIError.
+
+    Callers only ever have to handle APIError, so an identity/token outage
+    returns a clean message instead of crashing the tool call.
+    """
+    try:
+        return auth.get_token()
+    except auth.AuthError as exc:
+        raise APIError(f"authentication failed: {exc}") from exc
+
+
 def _get(
     path: str,
     params: dict[str, Any] | None = None,
     _retried: bool = False,
     base_url: str = BASE_URL,
 ) -> Any:
-    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    headers = {"Authorization": f"Bearer {_token()}"}
     try:
         response = httpx.get(f"{base_url}{path}", headers=headers, params=params, timeout=_TIMEOUT)
     except httpx.HTTPError as exc:
@@ -95,7 +110,7 @@ def _post_multipart(
     Mirrors `_get`'s auth/retry/envelope handling so callers get the same
     APIError behaviour regardless of which verb/content-type is used.
     """
-    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    headers = {"Authorization": f"Bearer {_token()}"}
     try:
         response = httpx.post(
             f"{base_url}{path}", headers=headers, files=files, data=data, timeout=_TIMEOUT
@@ -118,16 +133,18 @@ def get_nfzs(params: dict[str, Any] | None = None) -> Any:
     """GET /airspace/nfzs — the fleet's NFZs. Returns the raw `data` payload."""
     return _get("/airspace/nfzs", params=params)
 
+def get_flights(params: dict[str, Any] | None = None) -> Any:
+    """GET /aircraft/flights — recorded flights. Returns the raw `data` payload."""
+    return _get("/aircraft/flights", params=params)
+
+
+def get_media_by_id(media_id: str) -> Any:
+    """GET /media/{media_id} — one media item's metadata. CONFIRMED working."""
+    return _get(f"/media/{media_id}")
+
 
 def get_media_for_flight(flight_id: str) -> Any:
-    """GET media associated with a flight, via the Media Asset Service.
-
-    UNCONFIRMED: Full_Media.flight_id is documented as deprecated, so the
-    query param / endpoint below is a placeholder pending Garuda confirming
-    the current flight -> media linkage (see Research 2, "Still to Research").
-    Update this once confirmed rather than assuming it works as written.
-    """
-    return _get("/media", params={"flight_id": flight_id}, base_url=MEDIA_BASE_URL)
+    return _get("/media", params={"flight_id": flight_id})
 
 
 def get_media_bytes(url: str) -> bytes:
@@ -138,7 +155,7 @@ def get_media_bytes(url: str) -> bytes:
     media_id". This is a plain authenticated fetch, not through `_get`,
     since the response here is binary, not the standard JSON envelope.
     """
-    headers = {"Authorization": f"Bearer {auth.get_token()}"}
+    headers = {"Authorization": f"Bearer {_token()}"}
     try:
         response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
     except httpx.HTTPError as exc:
@@ -173,6 +190,99 @@ def create_detections(
 def get_detections(params: dict[str, Any] | None = None) -> Any:
     """GET /ml_detections — query detections that already exist, without re-running inference."""
     return _get("/ml_detections", params=params, base_url=GEO_AI_BASE_URL)
+
+
+def _post_json(
+    path: str,
+    json_body: dict[str, Any] | None = None,
+    _retried: bool = False,
+    base_url: str = BASE_URL,
+) -> Any:
+    """POST a JSON body. Mirrors `_get`'s auth/retry/envelope handling."""
+    headers = {"Authorization": f"Bearer {_token()}"}
+    try:
+        response = httpx.post(
+            f"{base_url}{path}", headers=headers, json=json_body, timeout=_TIMEOUT
+        )
+    except httpx.HTTPError as exc:
+        raise APIError(f"network error calling {path}: {exc}") from exc
+
+    if response.status_code == 401 and not _retried:
+        auth.get_token(force_refresh=True)
+        return _post_json(path, json_body=json_body, _retried=True, base_url=base_url)
+
+    return _handle_response(response, path)
+
+
+def _patch_json(
+    path: str,
+    json_body: dict[str, Any],
+    _retried: bool = False,
+    base_url: str = BASE_URL,
+) -> Any:
+    """PATCH a JSON body. Mirrors `_get`'s auth/retry/envelope handling."""
+    headers = {"Authorization": f"Bearer {_token()}"}
+    try:
+        response = httpx.patch(
+            f"{base_url}{path}", headers=headers, json=json_body, timeout=_TIMEOUT
+        )
+    except httpx.HTTPError as exc:
+        raise APIError(f"network error calling {path}: {exc}") from exc
+
+    if response.status_code == 401 and not _retried:
+        auth.get_token(force_refresh=True)
+        return _patch_json(path, json_body, _retried=True, base_url=base_url)
+
+    return _handle_response(response, path)
+
+
+def get_drone(drone_id: str) -> dict:
+    """GET /aircraft/drones/{drone_id} - one drone's full record."""
+    data = _get(f"/aircraft/drones/{drone_id}")
+    if isinstance(data, dict):
+        # The endpoint may nest the record under "drone".
+        return data.get("drone", data)
+    raise APIError(f"unexpected drone payload for {drone_id}")
+
+
+# --- State-changing calls ----------------------------------------------------
+# These are what the governance gate exists to protect.
+#
+# UNVERIFIED against the live sandbox. The paths come from the Developer
+# Programme onboarding deck (slide 33), which gives them relative to the
+# LiveFlights service. As of 20 Aug the service does not answer for our
+# credentials: /liveflights/sanity 404s while /aircraft/sanity is fine, and
+# POST .../arm returns 404. Either LiveFlights is not enabled for the
+# Developer Programme, or arm/takeoff only exist once a drone is in an active
+# live-flight session (the deck requires the drone powered, GPS-fixed and RTF).
+# Confirm with Garuda before relying on these for a demo; use set_drone_property
+# for a write that is known to work end to end.
+
+def arm_drone(drone_id: str) -> Any:
+    """POST /liveflights/drone/{drone_id}/arm - arms the motors. Real action."""
+    return _post_json(f"/liveflights/drone/{drone_id}/arm")
+
+
+def takeoff_drone(drone_id: str) -> Any:
+    """POST /liveflights/drone/{drone_id}/takeoff - the drone leaves the ground."""
+    return _post_json(f"/liveflights/drone/{drone_id}/takeoff")
+
+
+def land_drone(drone_id: str) -> Any:
+    """POST /liveflights/drone/{drone_id}/land - the undo for takeoff."""
+    return _post_json(f"/liveflights/drone/{drone_id}/land")
+
+
+def set_drone_property(drone_id: str, key: str, value: Any) -> Any:
+    """Merge one key into a drone's `properties` and PATCH it back.
+
+    Read-modify-write on purpose: `properties` already carries fields such as
+    {"simulated": true}, and PATCHing a bare {key: value} would drop them.
+    """
+    drone = get_drone(drone_id)
+    properties = dict(drone.get("properties") or {})
+    properties[key] = value
+    return _patch_json(f"/aircraft/drones/{drone_id}", {"properties": properties})
 
 
 if __name__ == "__main__":
