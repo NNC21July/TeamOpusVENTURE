@@ -17,13 +17,16 @@ import threading
 
 import httpx
 import jwt  # PyJWT
+import truststore
 from dotenv import load_dotenv
 
+truststore.inject_into_ssl()
 load_dotenv()
 
 IDENTITY_URL = "https://identity.garuda.io/token"
 _REFRESH_SKEW_SECONDS = 60  # refresh a minute before the token actually expires
-_FALLBACK_TTL_SECONDS = 72 * 3600  # onboarding states 72h; used only if exp is unreadable
+# onboarding states 72h; used only if exp is unreadable
+_FALLBACK_TTL_SECONDS = 72 * 3600
 
 _cache: dict[str, object] = {"token": None, "expires_at": 0.0}
 _lock = threading.Lock()
@@ -52,7 +55,8 @@ def _extract_token(response: httpx.Response) -> str:
         for key in ("access_token", "token", "jwt"):
             if body.get(key):
                 return str(body[key])
-        raise AuthError(f"token response had no known token field; keys={list(body)}")
+        raise AuthError(
+            f"token response had no known token field; keys={list(body)}")
     return response.text.strip()
 
 
