@@ -1,5 +1,6 @@
 from dataclasses import replace
-from datetime import date, time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from tools.route_airspace_compliance.decision_types import CheckResult, OverallDecision
 from tools.route_airspace_compliance.recurrence_schemas import (
     DailyRepetition,
@@ -9,6 +10,8 @@ from tools.route_airspace_compliance.service import check_route_airspace_complia
 from tools.route_airspace_compliance.request_response_schemas import RouteComplianceRequest, Waypoint
 from tools.route_airspace_compliance.tests.fakes import FakeAirspaceClient
 from tools.route_airspace_compliance.tests.fixtures.nfz_responses import ACTIVE_RESTRICTED_NFZ, PLANNED_END_TIME, PLANNED_START_TIME
+
+SINGAPORE_TIMEZONE = ZoneInfo("Asia/Singapore")
 
 def make_valid_request() -> RouteComplianceRequest:
     return RouteComplianceRequest(
@@ -86,9 +89,11 @@ def test_active_recurring_nfz_returns_block() -> None:
         valid_until=None,
         recurring_schedule=RecurringSchedule(
             timezone="Asia/Singapore",
-            effective_from=date(2026, 8, 1),
-            start_time=time(8, 0),
-            end_time=time(11, 0),
+            effective_from=datetime(
+                2026, 8, 1, 8, 0,
+                tzinfo=SINGAPORE_TIMEZONE,
+            ),
+            duration=timedelta(hours=3),
             recurrence_pattern=DailyRepetition(),
         ),
     )
