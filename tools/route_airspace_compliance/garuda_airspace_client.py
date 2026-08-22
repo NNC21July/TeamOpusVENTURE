@@ -20,6 +20,26 @@ class GarudaAirspaceClient:
 
         records: list[NfzRecord] = []
         for raw_nfz in nfzs:
-            records.extend(normalize_nfz_records(raw_nfz))
+            if not isinstance(raw_nfz, dict):
+                raise AirspaceDataUnavailableError(
+                    "Garuda NFZ API returned invalid NFZ data")
+
+            validity = raw_nfz.get("validity")
+            if not isinstance(validity, list) or not validity:
+                raise AirspaceDataUnavailableError(
+                    "Garuda NFZ API returned invalid NFZ data")
+
+            try:
+                records.extend(normalize_nfz_records(raw_nfz))
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                AttributeError,
+                NotImplementedError,
+                OverflowError,
+            ) as exc:
+                raise AirspaceDataUnavailableError(
+                    "Garuda NFZ API returned invalid NFZ data") from exc
 
         return records

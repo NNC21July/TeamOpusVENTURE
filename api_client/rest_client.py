@@ -48,7 +48,8 @@ def _handle_response(response: httpx.Response, path: str) -> Any:
     try:
         body = response.json()
     except ValueError:
-        raise APIError(f"{path} returned non-JSON (HTTP {response.status_code})")
+        raise APIError(
+            f"{path} returned non-JSON (HTTP {response.status_code})")
 
     # Standard Garuda envelope: {"status": "success"|"fail"|"error", ...}
     if isinstance(body, dict):
@@ -57,22 +58,24 @@ def _handle_response(response: httpx.Response, path: str) -> Any:
             return body.get("data")
         if status in ("fail", "error"):
             detail = body.get("message") or body.get("data")
-            raise APIError(f"{path} failed (HTTP {response.status_code}): {detail}")
+            raise APIError(
+                f"{path} failed (HTTP {response.status_code}): {detail}")
 
     # Some endpoints may not wrap; accept any 2xx body.
     if response.is_success:
         return body
-    raise APIError(f"{path}: unexpected response (HTTP {response.status_code})")
+    raise APIError(
+        f"{path}: unexpected response (HTTP {response.status_code})")
 
 
-def _token() -> str:
+def _token(force_refresh: bool = False) -> str:
     """Fetch the bearer token, surfacing auth failures as APIError.
 
     Callers only ever have to handle APIError, so an identity/token outage
     returns a clean message instead of crashing the tool call.
     """
     try:
-        return auth.get_token()
+        return auth.get_token(force_refresh=force_refresh)
     except auth.AuthError as exc:
         raise APIError(f"authentication failed: {exc}") from exc
 
@@ -85,13 +88,14 @@ def _get(
 ) -> Any:
     headers = {"Authorization": f"Bearer {_token()}"}
     try:
-        response = httpx.get(f"{base_url}{path}", headers=headers, params=params, timeout=_TIMEOUT)
+        response = httpx.get(
+            f"{base_url}{path}", headers=headers, params=params, timeout=_TIMEOUT)
     except httpx.HTTPError as exc:
         raise APIError(f"network error calling {path}: {exc}") from exc
 
     # Token may have expired mid-life; refresh once and retry.
     if response.status_code == 401 and not _retried:
-        auth.get_token(force_refresh=True)
+        _token(force_refresh=True)
         return _get(path, params=params, _retried=True, base_url=base_url)
 
     return _handle_response(response, path)
@@ -119,7 +123,7 @@ def _post_multipart(
         raise APIError(f"network error calling {path}: {exc}") from exc
 
     if response.status_code == 401 and not _retried:
-        auth.get_token(force_refresh=True)
+        _token(force_refresh=True)
         return _post_multipart(path, files=files, data=data, _retried=True, base_url=base_url)
 
     return _handle_response(response, path)
@@ -129,9 +133,11 @@ def get_drones(params: dict[str, Any] | None = None) -> Any:
     """GET /aircraft/drones — the fleet's drones. Returns the raw `data` payload."""
     return _get("/aircraft/drones", params=params)
 
+
 def get_nfzs(params: dict[str, Any] | None = None) -> Any:
     """GET /airspace/nfzs — the fleet's NFZs. Returns the raw `data` payload."""
     return _get("/airspace/nfzs", params=params)
+
 
 def get_flights(params: dict[str, Any] | None = None) -> Any:
     """GET /aircraft/flights — recorded flights. Returns the raw `data` payload."""
@@ -159,17 +165,21 @@ def get_media_bytes(url: str) -> bytes:
     try:
         response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
     except httpx.HTTPError as exc:
-        raise APIError(f"network error fetching media bytes from {url}: {exc}") from exc
+        raise APIError(
+            f"network error fetching media bytes from {url}: {exc}") from exc
 
     if response.status_code == 401:
-        headers = {"Authorization": f"Bearer {auth.get_token(force_refresh=True)}"}
+        headers = {
+            "Authorization": f"Bearer {_token(force_refresh=True)}"}
         try:
             response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
         except httpx.HTTPError as exc:
-            raise APIError(f"network error fetching media bytes from {url}: {exc}") from exc
+            raise APIError(
+                f"network error fetching media bytes from {url}: {exc}") from exc
 
     if not response.is_success:
-        raise APIError(f"fetching media bytes failed (HTTP {response.status_code}): {url}")
+        raise APIError(
+            f"fetching media bytes failed (HTTP {response.status_code}): {url}")
     return response.content
 
 
@@ -208,7 +218,7 @@ def _post_json(
         raise APIError(f"network error calling {path}: {exc}") from exc
 
     if response.status_code == 401 and not _retried:
-        auth.get_token(force_refresh=True)
+        _token(force_refresh=True)
         return _post_json(path, json_body=json_body, _retried=True, base_url=base_url)
 
     return _handle_response(response, path)
@@ -230,7 +240,7 @@ def _patch_json(
         raise APIError(f"network error calling {path}: {exc}") from exc
 
     if response.status_code == 401 and not _retried:
-        auth.get_token(force_refresh=True)
+        _token(force_refresh=True)
         return _patch_json(path, json_body, _retried=True, base_url=base_url)
 
     return _handle_response(response, path)
@@ -308,7 +318,8 @@ if __name__ == "__main__":
         if drones and isinstance(drones[0], dict):
             print("first drone field names:", list(drones[0].keys()))
             d0 = drones[0]
-            preview = {k: d0.get(k) for k in ("name", "serial_number", "model", "status", "drone_id", "id") if k in d0}
+            preview = {k: d0.get(k) for k in (
+                "name", "serial_number", "model", "status", "drone_id", "id") if k in d0}
             print("sample (non-personal):", preview)
     else:
         print("unexpected shape; repr head:", repr(data)[:300])
