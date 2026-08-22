@@ -61,6 +61,10 @@ def list_requests(status: RequestStatus | None = None) -> list[Request]:
         reqs = _load_requests().values()
         return [i for i in reqs if i.status == status]
 
+def get_request(request_id: str) -> Request | None:
+    """Look up one request, or None if the id is unknown. Read-only."""
+    return _load_requests().get(request_id)
+
 def hash_params(tool: str, params: dict) -> str:
     canonical = json.dumps({"tool": tool, "params": params}, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
