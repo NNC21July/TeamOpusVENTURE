@@ -12,6 +12,32 @@ does the real function get to run right now, or not?
           and matches this exact call, THEN run the real function.
 
 Every risky decision is written to the audit log, whether it ran or not.
+
+Constraint for tools you decorate
+---------------------------------
+A governed tool must be annotated `-> dict`, because this wrapper can return
+a dict (PENDING_APPROVAL / BLOCKED) instead of the tool's own result. FastMCP
+validates a tool's output against its declared return type, and functools.wraps
+keeps the wrapped function's annotation, so a tool declared `-> str` will fail
+validation the moment the gate intercepts it.
+
+Why the two-call dance instead of MCP elicitation
+-------------------------------------------------
+Elicitation is the spec-native way for a server to ask a human mid-call, but
+Claude Desktop -- our client -- does not implement it (Claude Code CLI does).
+So the server cannot pause and prompt; approval has to happen out of band.
+
+That constraint pushed us to: return a pending request immediately, let the
+pilot approve elsewhere (approve.py), then have the caller retry. The
+2026-07-28 MCP spec independently moved the same way: Multi Round-Trip
+Requests (SEP-2322) replaced hold-the-connection-open elicitation with
+return-pending -> answer -> re-issue, because holding a connection does not
+work for stateless deployments.
+
+Upgrade path if Desktop ships elicitation: replace only the approval-capture
+step with ctx.elicit(). The tier lookup, params-hash binding, single-use
+consumption and audit trail below are unaffected -- they are the enforcement,
+and elicitation only changes how the human is asked.
 """
 
 import functools

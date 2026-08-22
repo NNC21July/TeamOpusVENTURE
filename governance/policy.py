@@ -9,11 +9,15 @@ class Tier(str, Enum):
 
 
 POLICIES: dict[str, Tier] = {
+    # Read-only: safe to call freely.
     "list_drones": Tier.ALLOW,
     "summarize_flight_inspection": Tier.ALLOW,
-    "book_airspace": Tier.REQUIRE_APPROVAL,
+    "list_flights": Tier.ALLOW,
+    
+    # State-changing: a pilot must approve before these run.
     "testing_tool": Tier.REQUIRE_APPROVAL,
-    "takeoff": Tier.REQUIRE_APPROVAL
+    "set_drone_note": Tier.REQUIRE_APPROVAL,
+    "takeoff": Tier.REQUIRE_APPROVAL,
 }
 
 def get_tier_for_tool(tool_name: str) -> Tier:

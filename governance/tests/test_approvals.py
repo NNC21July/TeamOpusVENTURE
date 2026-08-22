@@ -89,3 +89,22 @@ def test_state_persists_across_separate_loads():
     reloaded = approvals._load_requests()[request.request_id]
     assert reloaded.status == RequestStatus.APPROVED
     assert reloaded.pilot_id == "pilot-1"
+
+
+def test_empty_state_file_is_treated_as_no_requests():
+    """A zero-byte file (created but never written) must not crash the layer."""
+    approvals.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    approvals.REQUESTS_FILE.write_text("")
+
+    assert approvals.list_requests() == []
+    request = approvals.create_request("book_airspace", {"zone": "A"})
+    assert request.status == RequestStatus.PENDING
+
+
+def test_corrupt_state_file_fails_closed():
+    """Malformed JSON must raise, not silently wipe existing approvals."""
+    approvals.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    approvals.REQUESTS_FILE.write_text("{not valid json")
+
+    with pytest.raises(ValueError):
+        approvals.list_requests()
