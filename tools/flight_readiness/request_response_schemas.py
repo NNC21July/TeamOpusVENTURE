@@ -1,6 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from tools.flight_readiness.decision_types import (
+    CheckResult,
+    ConfidenceLevel,
+    OverallDecision,
+)
 from tools.maintenance_status.status_types import MaintenanceStatus
 
 
@@ -76,3 +81,40 @@ class MaintenanceSnapshot:
     next_due_date: date | None = None
     hours_source: str | None = None
     checked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class CheckDetail:
+    # The outcome of one predictor. `observed` and `threshold` carry the numbers
+    # the verdict was reached from, so the model can explain why rather than
+    # simply relaying the verdict.
+    check_id: str
+    category: str
+    result: CheckResult
+    observed: dict[str, object] = field(default_factory=dict)
+    threshold: dict[str, object] = field(default_factory=dict)
+    source: str | None = None
+    message: str | None = None
+    assumptions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Confidence:
+    # Categorical, never numeric. `reasons` explains what limited it.
+    level: ConfidenceLevel
+    reasons: tuple[str, ...] = ()
+    recommended_recheck: datetime | None = None
+
+
+@dataclass(frozen=True)
+class FlightReadinessResponse:
+    # Result returned by the tool for the whole mission
+    decision: OverallDecision
+    confidence: Confidence | None = None
+    checks: tuple[CheckDetail, ...] = ()
+    blocking_factors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    missing_inputs: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+    recommended_actions: tuple[str, ...] = ()
+    data_checked_at: datetime | None = None
