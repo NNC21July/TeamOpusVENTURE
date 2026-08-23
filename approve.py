@@ -20,6 +20,23 @@ from governance import approvals
 from governance.schemas import RequestStatus
 
 
+def _resolve_id(prefix: str) -> str:
+    """Accept the first few characters of a request id instead of the full UUID.
+
+    Typing a 36-character UUID by hand is the main friction in this flow. An
+    unknown or ambiguous prefix raises rather than guessing - approving the
+    wrong action is exactly what this tool exists to prevent.
+    """
+    matches = [r.request_id for r in approvals.list_requests()
+               if r.request_id.startswith(prefix)]
+    if not matches:
+        raise ValueError(f"No request whose id starts with {prefix!r}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{prefix!r} matches {len(matches)} requests - use more characters")
+    return matches[0]
+
+
 def cmd_list(_args: argparse.Namespace) -> int:
     pending = approvals.list_requests(RequestStatus.PENDING)
     if not pending:
@@ -28,32 +45,36 @@ def cmd_list(_args: argparse.Namespace) -> int:
 
     print(f"{len(pending)} request(s) awaiting approval:\n")
     for request in sorted(pending, key=lambda r: r.created_at):
-        print(f"  id      : {request.request_id}")
+        short = request.request_id[:8]
         print(f"  action  : {request.preview}")
         print(f"  asked at: {request.created_at:%Y-%m-%d %H:%M:%S}")
+        print(f"  approve : python approve.py approve {short} <your_pilot_id>")
+        print(f"  deny    : python approve.py deny {short} <your_pilot_id>")
         print()
-    print("Approve with: python approve.py approve <id> <your_pilot_id>")
     return 0
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
     try:
-        request = approvals.approve(args.request_id, args.pilot_id)
+        request = approvals.approve(_resolve_id(args.request_id), args.pilot_id)
     except ValueError as exc:
         print(f"Could not approve: {exc}", file=sys.stderr)
         return 1
     print(f"Approved by {args.pilot_id}: {request.preview}")
-    print("The action still has to be retried with this request id to run.")
+    print()
+    print("This has NOT run yet - approving only unlocks it.")
+    print("Go back to the chat and ask the assistant to retry the action.")
     return 0
 
 
 def cmd_deny(args: argparse.Namespace) -> int:
     try:
-        approvals.deny(args.request_id, args.pilot_id)
+        request = approvals.deny(_resolve_id(args.request_id), args.pilot_id)
     except ValueError as exc:
         print(f"Could not deny: {exc}", file=sys.stderr)
         return 1
-    print(f"Denied by {args.pilot_id}. The action cannot run.")
+    print(f"Denied by {args.pilot_id}: {request.preview}")
+    print("This action can no longer run. Tell the assistant it was denied.")
     return 0
 
 
