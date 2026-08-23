@@ -195,14 +195,26 @@ def _check_precipitation(
 def _check_temperature(
     *, weather: WeatherRecord, aircraft: AircraftRecord
 ) -> CheckDetail:
-    temperature = weather.temperature_c
     minimum = aircraft.operating_temp_min_c
     maximum = aircraft.operating_temp_max_c
 
-    observed = {"temperature_c": temperature}
+    # Prefer the window extremes when the source supplied them; a record
+    # summarising six hours should not be judged on one representative value.
+    coldest = weather.temperature_min_c
+    hottest = weather.temperature_max_c
+    if coldest is None:
+        coldest = weather.temperature_c
+    if hottest is None:
+        hottest = weather.temperature_c
+
+    observed = {
+        "temperature_c": weather.temperature_c,
+        "temperature_min_c": weather.temperature_min_c,
+        "temperature_max_c": weather.temperature_max_c,
+    }
     threshold = {"operating_temp_min_c": minimum, "operating_temp_max_c": maximum}
 
-    if temperature is None or minimum is None or maximum is None:
+    if coldest is None or hottest is None or minimum is None or maximum is None:
         return CheckDetail(
             check_id="WX-003",
             category="weather_temperature",
@@ -213,7 +225,7 @@ def _check_temperature(
             message="Temperature could not be assessed.",
         )
 
-    if temperature < minimum or temperature > maximum:
+    if coldest < minimum:
         return CheckDetail(
             check_id="WX-003",
             category="weather_temperature",
@@ -222,8 +234,22 @@ def _check_temperature(
             threshold=threshold,
             source=weather.source,
             message=(
-                f"Forecast temperature of {temperature:.1f} C is outside the "
-                f"operating range {minimum:.1f} to {maximum:.1f} C."
+                f"Forecast temperature of {coldest:.1f} C is below the "
+                f"operating minimum of {minimum:.1f} C."
+            ),
+        )
+
+    if hottest > maximum:
+        return CheckDetail(
+            check_id="WX-003",
+            category="weather_temperature",
+            result=CheckResult.FAIL,
+            observed=observed,
+            threshold=threshold,
+            source=weather.source,
+            message=(
+                f"Forecast temperature of {hottest:.1f} C is above the "
+                f"operating maximum of {maximum:.1f} C."
             ),
         )
 

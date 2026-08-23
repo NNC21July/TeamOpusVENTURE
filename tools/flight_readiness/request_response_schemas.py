@@ -42,6 +42,9 @@ class AircraftRecord:
     operating_temp_max_c: float | None = None
     precipitation_tolerance_mm_h: float | None = None
     is_flying: bool = False
+    # Plex's own airworthiness flag. None means the field was absent, which is
+    # not the same as False and must not be read as "not serviceable".
+    serviceable: bool | None = None
     limits_source: str | None = None
     observed_at: datetime | None = None
 
@@ -68,6 +71,10 @@ class WeatherRecord:
     wind_altitude_m: float | None = None
     precipitation_mm_h: float | None = None
     temperature_c: float | None = None
+    # When a record summarises a window rather than an instant, these carry the
+    # extremes. A single temperature would hide a cold dawn or a hot midday.
+    temperature_min_c: float | None = None
+    temperature_max_c: float | None = None
     observed_at: datetime | None = None
 
 

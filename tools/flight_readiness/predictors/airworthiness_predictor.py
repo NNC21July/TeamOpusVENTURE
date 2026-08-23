@@ -103,8 +103,25 @@ def _check_maintenance(*, maintenance: MaintenanceSnapshot | None) -> CheckDetai
 
 
 def _check_aircraft_state(*, aircraft: AircraftRecord) -> CheckDetail:
-    observed = {"status": aircraft.status, "is_flying": aircraft.is_flying}
-    threshold = {"required_status": READY_TO_FLY_STATUS}
+    observed = {
+        "status": aircraft.status,
+        "is_flying": aircraft.is_flying,
+        "serviceable": aircraft.serviceable,
+    }
+    threshold = {"required_status": READY_TO_FLY_STATUS, "serviceable": True}
+
+    # Plex's own flag, and it outranks everything else here: if the fleet
+    # system says the airframe is not serviceable, no amount of RTF status
+    # makes it flyable. None means the field was absent, not False.
+    if aircraft.serviceable is False:
+        return CheckDetail(
+            check_id="MNT-002",
+            category="aircraft_state",
+            result=CheckResult.FAIL,
+            observed=observed,
+            threshold=threshold,
+            message="Plex has this airframe marked as not serviceable.",
+        )
 
     if not aircraft.status:
         return CheckDetail(
