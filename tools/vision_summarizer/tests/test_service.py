@@ -90,3 +90,8 @@ def test_all_detections_unavailable_returns_unknown() -> None:
     result = summarize_flight(request=request, media_client=media_client, detection_client=detection_client)
 
     assert result.status is SummaryStatus.UNKNOWN
+    # Notes must reflect the real per-item reason, not a hardcoded blanket
+    # claim about the cause (e.g. "Geo AI was unreachable") — the actual
+    # cause could just as easily be an unsupported media type.
+    assert "MEDIA-1" in result.notes[0]
+    assert "unreachable" not in result.notes[0].lower()

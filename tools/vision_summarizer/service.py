@@ -53,12 +53,18 @@ def summarize_flight(
 
     findings: list[MediaFinding] = []
     unavailable_media: list[str] = []
+    unavailable_reasons: list[str] = []
 
     for media in media_items:
         try:
             raw_detections = detection_client.get_detections_for_media(media=media)
-        except DetectionDataUnavailableError:
+        except DetectionDataUnavailableError as exc:
+            # Use the exception's own message rather than assuming a cause —
+            # it already distinguishes "unsupported media type" (e.g. video)
+            # from a genuine service/network error, and those are very
+            # different situations for a pilot reading the result.
             unavailable_media.append(media.media_id)
+            unavailable_reasons.append(f"{media.media_id}: {exc}")
             continue
 
         # Descriptor layer: raw geometry -> plain-language position, and
@@ -79,20 +85,19 @@ def summarize_flight(
     findings.sort(key=lambda f: f.captured_at or media_items[0].captured_at or "")
 
     if not findings:
+        # Was previously hardcoded to "Geo AI Config Service was
+        # unreachable for all media in this flight" regardless of cause —
+        # misleading when the real reason was e.g. every item being an
+        # unsupported media type (video), not a service outage.
         return SummarizeFlightResponse(
             flight_id=request.flight_id,
             status=SummaryStatus.UNKNOWN,
             media_count=len(media_items),
-            notes=("Geo AI Config Service was unreachable for all media in this flight.",),
+            notes=tuple(unavailable_reasons),
         )
 
     status = SummaryStatus.PARTIAL if unavailable_media else SummaryStatus.COMPLETE
-    notes = (
-        (f"Detections unavailable for {len(unavailable_media)} media item(s): "
-         f"{', '.join(unavailable_media)}",)
-        if unavailable_media
-        else ()
-    )
+    notes = tuple(unavailable_reasons)
 
     return SummarizeFlightResponse(
         flight_id=request.flight_id,
