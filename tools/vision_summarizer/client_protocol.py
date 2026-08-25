@@ -19,9 +19,9 @@ class MediaClient(Protocol):
 
 class DetectionClient(Protocol):
     # Capability required from the API Client for the Geo AI Config Service side.
-    # Takes the whole MediaItem (not just its id) because implementations that
-    # trigger fresh detection (POST /ml_detections/upload) need the media's
-    # URL to download the raw image bytes before uploading them — Geo AI
-    # takes a raw image, not a media_id reference (see Research 2).
+    # Takes the whole MediaItem (not just its id) because implementations need
+    # both media_id (to fetch raw bytes before uploading — Geo AI takes a raw
+    # image, not a media_id reference) and media_type (to decide whether/how
+    # a given item can be processed, e.g. image vs. video).
     def get_detections_for_media(self, *, media: MediaItem) -> list[RawDetection]:
         ...

@@ -65,5 +65,3 @@ def _extract_image_list(data: object) -> list[dict]:
     if isinstance(data, list):
         return data
     return []
-
-

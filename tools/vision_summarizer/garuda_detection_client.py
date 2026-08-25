@@ -1,8 +1,8 @@
 """Concrete DetectionClient implementation, backed by api_client/rest_client.py.
 
 /ml_detections/upload takes a raw image, not a media_id reference — so this
-first downloads the media's bytes (via its Media Asset Service URL), then
-uploads them to Geo AI. See Research 2, "Resolved: upload takes raw image".
+first downloads the media's bytes by media_id (see rest_client.get_media_bytes),
+then uploads them to Geo AI.
 
 Video support: Geo AI only accepts still image freeze frames (confirmed in
 its own Swagger docs), and full video frame-sampling is deliberately out of
