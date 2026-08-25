@@ -165,17 +165,21 @@ def summarize_flight_inspection(flight_id: str, focus: str | None = None) -> dic
 
     Given a flight_id, retrieves the flight's media, runs it through Garuda's
     Geo AI detection, and returns deduplicated, plain-language-described
-    findings (what was detected, roughly where in the frame, how it relates
-    to the facade if that context is available, and how many times/how long
-    it was observed for video). Pass focus="defects only" to narrow findings
-    to defect-type detections when writing your summary.
+    findings (what was detected, roughly where in the frame, and how it
+    relates to the facade if that context is available). Pass
+    focus="defects only" to narrow findings to defect-type detections when
+    writing your summary.
+
+    Video media: currently summarized from a single representative frame
+    only, not the full video — findings from video will have a note saying
+    so, and the response status will be PARTIAL rather than COMPLETE.
 
     This tool does NOT write the final prose summary for you — use the
     returned findings to write a short, pilot-readable summary yourself.
     Always state the returned status (COMPLETE / PARTIAL / NO_MEDIA /
-    NEEDS_INFO / UNKNOWN) so the pilot knows whether they're seeing the full
-    picture. Read-only: it only reads flight/media/detection data and
-    changes nothing.
+    NEEDS_INFO / UNKNOWN) and pass along any notes, so the pilot knows
+    whether they're seeing the full picture. Read-only: it only reads
+    flight/media/detection data and changes nothing.
     """
     request = SummarizeFlightRequest(flight_id=flight_id, focus=focus)
     response = summarize_flight(

@@ -6,8 +6,8 @@ from tools.vision_summarizer.service import summarize_flight
 from tools.vision_summarizer.tests.fakes import FakeDetectionClient, FakeMediaClient
 
 
-def make_media(media_id: str, captured_at: datetime) -> MediaItem:
-    return MediaItem(media_id=media_id, media_type="image", captured_at=captured_at)
+def make_media(media_id: str, captured_at: datetime, media_type: str = "image") -> MediaItem:
+    return MediaItem(media_id=media_id, media_type=media_type, captured_at=captured_at)
 
 
 def make_detection(media_id: str, label: str = "crack") -> RawDetection:
@@ -95,3 +95,25 @@ def test_all_detections_unavailable_returns_unknown() -> None:
     # cause could just as easily be an unsupported media type.
     assert "MEDIA-1" in result.notes[0]
     assert "unreachable" not in result.notes[0].lower()
+
+
+def test_video_finding_forces_partial_status_with_honest_note() -> None:
+    # Even when the detection call itself succeeds for a video (via a
+    # single Garuda-selected frame — see GarudaDetectionClient), that's not
+    # full video coverage, and the response must say so rather than
+    # reporting COMPLETE as if the whole video was reviewed.
+    request = SummarizeFlightRequest(flight_id="FLIGHT-1")
+    captured_at = datetime(2026, 8, 1, 9, 14, tzinfo=timezone.utc)
+    media_client = FakeMediaClient(
+        media=[make_media("VIDEO-1", captured_at, media_type="video")]
+    )
+    detection_client = FakeDetectionClient(
+        detections_by_media={"VIDEO-1": [make_detection("VIDEO-1")]}
+    )
+
+    result = summarize_flight(request=request, media_client=media_client, detection_client=detection_client)
+
+    assert result.status is SummaryStatus.PARTIAL
+    assert len(result.findings) == 1
+    assert "VIDEO-1" in result.notes[0]
+    assert "single representative frame" in result.notes[0]

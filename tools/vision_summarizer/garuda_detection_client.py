@@ -3,6 +3,18 @@
 /ml_detections/upload takes a raw image, not a media_id reference — so this
 first downloads the media's bytes (via its Media Asset Service URL), then
 uploads them to Geo AI. See Research 2, "Resolved: upload takes raw image".
+
+Video support: Geo AI only accepts still image freeze frames (confirmed in
+its own Swagger docs), and full video frame-sampling is deliberately out of
+scope for now (see team discussion — real frame extraction needs a new local
+dependency and is bigger, separate work). But the Media Service's own
+size-variant endpoints already return "a single frame from the video" for
+video-type media (confirmed in its docs) — so video is handled here by
+reusing that single Garuda-selected frame exactly like an image. This is a
+partial-coverage snapshot, not a full video review; service.py is
+responsible for surfacing that distinction to the caller (forcing PARTIAL
+status + an explicit note), since this client has no way to know how
+complete a summary its caller intends to build from the result.
 """
 
 from tools.vision_summarizer.decision_types import DetectionShape
@@ -21,17 +33,17 @@ _DEFAULT_LABELS = ["defect", "crack", "spalling", "stain", "person"]
 # if Garuda expects a specific model-version id here instead.
 _CREATED_BY = "vision-summarizer-tool"
 
+# "video" is handled via a single Garuda-selected representative frame (see
+# module docstring) — not full video coverage, but not rejected outright.
+_SUPPORTED_MEDIA_TYPES = ("image", "video")
+
 
 class GarudaDetectionClient:
     def get_detections_for_media(self, *, media: MediaItem) -> list[RawDetection]:
-        if media.media_type != "image":
-            # Confirmed in Research 2: Geo AI only supports still image
-            # freeze frames. Video needs frame extraction before this call,
-            # which isn't implemented yet — surface as unavailable rather
-            # than silently skipping or crashing.
+        if media.media_type not in _SUPPORTED_MEDIA_TYPES:
             raise DetectionDataUnavailableError(
-                f"media_type '{media.media_type}' is not yet supported "
-                "(only 'image' is handled — video needs frame-sampling first)"
+                f"media_type '{media.media_type}' is not supported "
+                f"(supported: {', '.join(_SUPPORTED_MEDIA_TYPES)})"
             )
 
         try:

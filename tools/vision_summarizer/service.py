@@ -54,15 +54,16 @@ def summarize_flight(
     findings: list[MediaFinding] = []
     unavailable_media: list[str] = []
     unavailable_reasons: list[str] = []
+    single_frame_video_notes: list[str] = []
 
     for media in media_items:
         try:
             raw_detections = detection_client.get_detections_for_media(media=media)
         except DetectionDataUnavailableError as exc:
             # Use the exception's own message rather than assuming a cause —
-            # it already distinguishes "unsupported media type" (e.g. video)
-            # from a genuine service/network error, and those are very
-            # different situations for a pilot reading the result.
+            # it already distinguishes "unsupported media type" from a
+            # genuine service/network error, and those are very different
+            # situations for a pilot reading the result.
             unavailable_media.append(media.media_id)
             unavailable_reasons.append(f"{media.media_id}: {exc}")
             continue
@@ -80,6 +81,17 @@ def summarize_flight(
             )
         )
 
+        if media.media_type == "video":
+            # GarudaDetectionClient runs video through a single
+            # Garuda-selected representative frame, not the full video — a
+            # real finding, but not full coverage. Surfaced here (not in the
+            # detection client) because only this layer knows what "partial"
+            # means for the response as a whole.
+            single_frame_video_notes.append(
+                f"{media.media_id}: video summarized via a single representative "
+                "frame — full video review not yet supported."
+            )
+
     # Order findings chronologically where we have timestamps, so a caller
     # reading through them gets a coherent narrative, not an arbitrary listing.
     findings.sort(key=lambda f: f.captured_at or media_items[0].captured_at or "")
@@ -96,8 +108,12 @@ def summarize_flight(
             notes=tuple(unavailable_reasons),
         )
 
-    status = SummaryStatus.PARTIAL if unavailable_media else SummaryStatus.COMPLETE
-    notes = tuple(unavailable_reasons)
+    status = (
+        SummaryStatus.PARTIAL
+        if unavailable_media or single_frame_video_notes
+        else SummaryStatus.COMPLETE
+    )
+    notes = tuple(unavailable_reasons) + tuple(single_frame_video_notes)
 
     return SummarizeFlightResponse(
         flight_id=request.flight_id,

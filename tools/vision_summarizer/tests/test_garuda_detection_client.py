@@ -43,10 +43,44 @@ def test_downloads_bytes_then_uploads_and_parses_detections(monkeypatch):
     assert result[0].bbox == (0.5, 0.5, 0.1, 0.1)
 
 
-def test_non_image_media_type_raises_unavailable_without_calling_api():
+def test_unsupported_media_type_raises_unavailable_without_calling_api():
     client = GarudaDetectionClient()
     with pytest.raises(DetectionDataUnavailableError):
-        client.get_detections_for_media(media=make_media(media_type="video"))
+        client.get_detections_for_media(media=make_media(media_type="pdf"))
+
+
+def test_video_is_processed_via_single_frame_like_image(monkeypatch):
+    # Video isn't rejected: the Media Service's size-variant endpoints
+    # already return a single representative frame for video-type media, so
+    # this should hit the exact same path as an image.
+    calls = {}
+
+    def fake_get_media_bytes(media_id, variant="fullscreen"):
+        calls["media_id"] = media_id
+        calls["variant"] = variant
+        return b"fake-frame-bytes"
+
+    monkeypatch.setattr(rest_client, "get_media_bytes", fake_get_media_bytes)
+    monkeypatch.setattr(
+        rest_client,
+        "create_detections",
+        lambda **kwargs: {
+            "ml_detections": [
+                {
+                    "media_id": "MEDIA-1",
+                    "label": {"shape": "yolo-bbox", "bbox": [0.1, 0.1, 0.1, 0.1], "object": "person", "score": 0.7},
+                }
+            ]
+        },
+    )
+
+    client = GarudaDetectionClient()
+    result = client.get_detections_for_media(media=make_media(media_type="video"))
+
+    assert calls["media_id"] == "MEDIA-1"
+    assert calls["variant"] == "fullscreen"
+    assert len(result) == 1
+    assert result[0].object_label == "person"
 
 
 def test_api_error_raises_detection_data_unavailable(monkeypatch):
