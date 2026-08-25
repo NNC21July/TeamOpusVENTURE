@@ -34,11 +34,8 @@ class GarudaDetectionClient:
                 "(only 'image' is handled — video needs frame-sampling first)"
             )
 
-        if not media.url:
-            raise DetectionDataUnavailableError(f"no fetchable URL for media {media.media_id}")
-
         try:
-            image_bytes = rest_client.get_media_bytes(media.url)
+            image_bytes = rest_client.get_media_bytes(media.media_id, variant="fullscreen")
             data = rest_client.create_detections(
                 image_bytes=image_bytes,
                 filename=f"{media.media_id}.jpg",

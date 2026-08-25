@@ -4,78 +4,78 @@ from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
 import pytest
 
 
-def test_maps_raw_media_list_into_media_items(monkeypatch):
-    def fake_get_media_for_flight(flight_id):
+def test_finds_media_via_matching_inspection(monkeypatch):
+    def fake_get_inspections(params=None):
         return {
-            "media": [
-                {
-                    "media_id": "MEDIA-1",
-                    "media_type": "image",
-                    "properties": {
-                        "original": {"url": "https://media.mydronefleets.com/files/1.jpg"},
-                        "exif": {"timestamp": "2026-08-01T09:14:00+08:00", "gps": [1.30, 103.80]},
-                    },
-                }
+            "inspections": [
+                {"inspection_id": "INSP-1", "flight_ids": ["FLIGHT-1"]},
+                {"inspection_id": "INSP-2", "flight_ids": ["OTHER-FLIGHT"]},
             ]
         }
 
-    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
+    def fake_get_inspection_images(params=None):
+        assert params == {"inspection_id": "INSP-1"}
+        return {"images": [{"inspection_image_id": "IMG-1", "media_id": "MEDIA-1"}]}
+
+    monkeypatch.setattr(rest_client, "get_inspections", fake_get_inspections)
+    monkeypatch.setattr(rest_client, "get_inspection_images", fake_get_inspection_images)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
 
     assert len(result) == 1
-    item = result[0]
-    assert item.media_id == "MEDIA-1"
-    assert item.media_type == "image"
-    assert item.url == "https://media.mydronefleets.com/files/1.jpg"
-    assert item.captured_at is not None
-    assert item.gps == (1.30, 103.80)
+    assert result[0].media_id == "MEDIA-1"
+    assert result[0].media_type == "image"
 
 
-def test_prefers_original_over_lower_res_variants(monkeypatch):
-    def fake_get_media_for_flight(flight_id):
-        return {
-            "media": [
-                {
-                    "media_id": "MEDIA-1",
-                    "media_type": "image",
-                    "properties": {
-                        "thumb": {"url": "https://media.mydronefleets.com/files/thumb.jpg"},
-                        "large": {"url": "https://media.mydronefleets.com/files/large.jpg"},
-                        "original": {"url": "https://media.mydronefleets.com/files/orig.jpg"},
-                    },
-                }
-            ]
-        }
+def test_no_matching_inspection_returns_empty(monkeypatch):
+    def fake_get_inspections(params=None):
+        return {"inspections": [{"inspection_id": "INSP-1", "flight_ids": ["OTHER-FLIGHT"]}]}
 
-    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_inspections", fake_get_inspections)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
 
-    assert result[0].url == "https://media.mydronefleets.com/files/orig.jpg"
+    assert result == []
 
 
-def test_missing_optional_fields_do_not_crash(monkeypatch):
-    def fake_get_media_for_flight(flight_id):
-        return {"media": [{"media_id": "MEDIA-1", "media_type": "image"}]}
+def test_images_missing_media_id_are_skipped(monkeypatch):
+    def fake_get_inspections(params=None):
+        return {"inspections": [{"inspection_id": "INSP-1", "flight_ids": ["FLIGHT-1"]}]}
 
-    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
+    def fake_get_inspection_images(params=None):
+        return {"images": [{"inspection_image_id": "IMG-1"}]}  # no media_id
+
+    monkeypatch.setattr(rest_client, "get_inspections", fake_get_inspections)
+    monkeypatch.setattr(rest_client, "get_inspection_images", fake_get_inspection_images)
 
     client = GarudaMediaClient()
     result = client.get_media_for_flight(flight_id="FLIGHT-1")
 
-    assert result[0].url is None
-    assert result[0].captured_at is None
-    assert result[0].gps is None
+    assert result == []
 
 
-def test_api_error_raises_media_data_unavailable(monkeypatch):
-    def fake_get_media_for_flight(flight_id):
+def test_inspections_api_error_raises_media_data_unavailable(monkeypatch):
+    def fake_get_inspections(params=None):
         raise rest_client.APIError("service down")
 
-    monkeypatch.setattr(rest_client, "get_media_for_flight", fake_get_media_for_flight)
+    monkeypatch.setattr(rest_client, "get_inspections", fake_get_inspections)
+
+    client = GarudaMediaClient()
+    with pytest.raises(MediaDataUnavailableError):
+        client.get_media_for_flight(flight_id="FLIGHT-1")
+
+
+def test_images_api_error_raises_media_data_unavailable(monkeypatch):
+    def fake_get_inspections(params=None):
+        return {"inspections": [{"inspection_id": "INSP-1", "flight_ids": ["FLIGHT-1"]}]}
+
+    def fake_get_inspection_images(params=None):
+        raise rest_client.APIError("service down")
+
+    monkeypatch.setattr(rest_client, "get_inspections", fake_get_inspections)
+    monkeypatch.setattr(rest_client, "get_inspection_images", fake_get_inspection_images)
 
     client = GarudaMediaClient()
     with pytest.raises(MediaDataUnavailableError):

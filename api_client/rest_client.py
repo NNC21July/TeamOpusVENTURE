@@ -15,14 +15,40 @@ Three services are covered here, each with its own base URL:
   - Media Asset Service      (MEDIA_BASE_URL) — flight media (images/video)
   - Geo AI Config Service    (GEO_AI_BASE_URL) — ML detections
 
-NOTE (updated 2026-08-21, after probing the live sandbox):
-  - MEDIA_BASE_URL is NOT where media lives. Every path on that host 404s
-    except /sanity. Media retrieval is on BASE_URL: /media/{media_id} works.
-    The constant is kept only in case get_media_bytes needs it for asset URLs.
-  - The flight -> media linkage is still unresolved. See get_media_for_flight
-    for exactly what was probed and the question to put to Garuda.
-  - GEO_AI_BASE_URL is from the Geo AI Config Service OAS docs, still
-    unverified against the sandbox.
+NOTE (updated 2026-08-24, after probing the live sandbox + the Media Service
+and Geo AI Config Service Swagger docs):
+  - Media metadata fetch-by-id works via BASE_URL: /media/{media_id}
+    (confirmed live). The Media Service's own documented server is
+    MEDIA_BASE_URL with path /m/{media_id} — same schema, so BASE_URL's
+    /media/{id} is presumably a gateway alias for it. Left as BASE_URL since
+    that's the proven-working path; MEDIA_BASE_URL is used for the
+    size-variant binary endpoints below, which only exist on that host.
+  - CONFIRMED: there is no download URL anywhere on the Media object itself.
+    Binary bytes come from GET {MEDIA_BASE_URL}/m/{media_id}/{variant}
+    (variant = thumb/preview/medium/large/fullscreen/original) — see
+    get_media_bytes.
+  - The flight -> media *listing* linkage is still unresolved, and now more
+    specifically: the Media Service Swagger has NO list/query endpoint at
+    all (only fetch-by-known-id and the size variants). get_media_for_flight
+    below is confirmed NOT to work as written (404). The real linkage is
+    more likely via the Building Facade Inspection Ops API (Inspection ->
+    images), not the Media Service directly — that Swagger hasn't been
+    pulled yet.
+  - RESOLVED (2026-08-25, Inspection Ops Service Swagger): the flight ->
+    media link and the missing upload endpoint were both a wrong-service
+    problem, not missing functionality. Facade-inspection media is NOT
+    reached through the Media Service at all — the real chain is:
+    Inspection.flight_ids[] (GET /inspections, INSPECTION_BASE_URL) -> each
+    inspection's images (GET /images, filtered by inspection_id — exact
+    query param unverified live) -> each image's media_id -> plugs directly
+    into the already-working get_media_by_id/get_media_bytes. Upload is
+    POST /images (INSPECTION_BASE_URL): multipart, takes inspection_id +
+    file, uploads to the Media Service AND associates it with the
+    inspection in one call — this is the real create/upload path.
+  - GEO_AI_BASE_URL is confirmed correct (https://api.mydronefleets.com/airspace,
+    per that service's own Swagger "Servers" section) — but whether
+    /ml_detections/upload actually runs inference given a raw image, vs.
+    only persisting detections computed elsewhere, is still unconfirmed.
 """
 
 from __future__ import annotations
@@ -36,6 +62,7 @@ import auth
 BASE_URL = "https://api.mydronefleets.com"
 MEDIA_BASE_URL = "https://media.mydronefleets.com"
 GEO_AI_BASE_URL = "https://api.mydronefleets.com/airspace"
+INSPECTION_BASE_URL = "https://api.mydronefleets.com/inspection-ops"
 _TIMEOUT = 20.0
 
 
@@ -150,17 +177,34 @@ def get_media_by_id(media_id: str) -> Any:
 
 
 def get_media_for_flight(flight_id: str) -> Any:
-    return _get("/media", params={"flight_id": flight_id})
+    # CONFIRMED (2026-08-24, live probe): bare "/media" 301-redirects to
+    # "/media/?flight_id=...". Call the trailing-slash path directly rather
+    # than following the redirect — the redirect's Location header comes
+    # back as http:// (not https://), and since it's the same host, httpx
+    # would resend the Authorization header over plaintext on a followed
+    # redirect. The flight_id query param itself was correct.
+    return _get("/media/", params={"flight_id": flight_id})
 
 
-def get_media_bytes(url: str) -> bytes:
-    """Download a media item's raw bytes from its Media Asset Service URL.
+_MEDIA_VARIANTS = ("thumb", "preview", "medium", "large", "fullscreen", "original")
 
-    Needed because /ml_detections/upload takes a raw image, not a media_id
-    reference — see Research 2, "Resolved: upload takes raw image, not
-    media_id". This is a plain authenticated fetch, not through `_get`,
-    since the response here is binary, not the standard JSON envelope.
+
+def get_media_bytes(media_id: str, variant: str = "fullscreen") -> bytes:
+    """Download one size-variant of a media item's raw bytes.
+
+    CONFIRMED against the Media Service Swagger: GET /m/{media_id}/{variant}
+    returns the file directly as application/octet-stream — there is no
+    separate "url" field on the Media object to read first. "original" is
+    explicitly documented as huge and not for routine use; "fullscreen"
+    (max 1280px) is the largest practical size for vision-model input.
+
+    This is a plain authenticated fetch, not through `_get`, since the
+    response here is binary, not the standard JSON envelope.
     """
+    if variant not in _MEDIA_VARIANTS:
+        raise APIError(f"unknown media variant '{variant}', must be one of {_MEDIA_VARIANTS}")
+
+    url = f"{MEDIA_BASE_URL}/m/{media_id}/{variant}"
     headers = {"Authorization": f"Bearer {_token()}"}
     try:
         response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
@@ -200,6 +244,116 @@ def create_detections(
 def get_detections(params: dict[str, Any] | None = None) -> Any:
     """GET /ml_detections — query detections that already exist, without re-running inference."""
     return _get("/ml_detections", params=params, base_url=GEO_AI_BASE_URL)
+
+
+def get_facilities(params: dict[str, Any] | None = None) -> Any:
+    """GET /facilities (Inspection Ops Service) — query facilities.
+
+    An Inspection requires a facility_id, so this is checked before
+    creating a new Facility for test data — reusing an existing one avoids
+    guessing at POST /facilities's request schema, which hasn't been seen
+    expanded yet.
+    """
+    return _get("/facilities", params=params, base_url=INSPECTION_BASE_URL)
+
+
+def create_facility(payload: dict[str, Any]) -> Any:
+    """POST /facilities (Inspection Ops Service) — create a Facility.
+
+    A Facility is a prerequisite for creating an Inspection (which requires
+    a facility_id) — see Create_Facility schema on the Inspection Ops
+    Service Swagger for the full field list.
+    """
+    return _post_json("/facilities", payload, base_url=INSPECTION_BASE_URL)
+
+
+def create_inspection(payload: dict[str, Any]) -> Any:
+    """POST /inspections (Inspection Ops Service) — create an Inspection.
+
+    payload["flight_ids"] is the real link back to a Flight — this is what
+    makes GarudaMediaClient.get_media_for_flight's Inspection lookup find
+    it later. See Create_Inspection schema on the Inspection Ops Service
+    Swagger for the full field list.
+    """
+    return _post_json("/inspections", payload, base_url=INSPECTION_BASE_URL)
+
+
+def get_facility_elevations(params: dict[str, Any] | None = None) -> Any:
+    """GET /elevations (Inspection Ops Service) — query Facility Elevations."""
+    return _get("/elevations", params=params, base_url=INSPECTION_BASE_URL)
+
+
+def create_facility_elevation(payload: dict[str, Any]) -> Any:
+    """POST /elevations (Inspection Ops Service) — create a Facility Elevation.
+
+    CONFIRMED live (2026-08-25): POST /images's facility_elevation param
+    requires a real Facility Elevation ID — omitting it entirely is rejected
+    as "Invalid facility_elevations", despite the field looking optional in
+    the docs (same pattern as Create_Inspection's start_date/end_date).
+    """
+    return _post_json("/elevations", payload, base_url=INSPECTION_BASE_URL)
+
+
+def update_inspection(inspection_id: str, payload: dict[str, Any]) -> Any:
+    """PATCH /inspections/{inspection_id} (Inspection Ops Service).
+
+    Testing hypothesis (2026-08-25): "Invalid facility_elevations" persisted
+    on POST /images across two independently-different, correctly-typed
+    array encodings, using a real elevation confirmed to exist and belong to
+    the right facility. Suspect Inspection.status needs to be past "draft"
+    (e.g. "inspecting") before images can be attached — undocumented, but
+    matches the pattern of other undocumented-but-real requirements found
+    so far (start_date/end_date, Facility Manager role).
+    """
+    return _patch_json(f"/inspections/{inspection_id}", payload, base_url=INSPECTION_BASE_URL)
+
+
+def get_inspections(params: dict[str, Any] | None = None) -> Any:
+    """GET /inspections (Inspection Ops Service) — query inspections.
+
+    Each inspection carries flight_ids[] — CONFIRMED (Inspection Ops Service
+    Swagger) this is the real link from a Flight to its facade-inspection
+    media. The Media Service itself has no flight linkage at all.
+    """
+    return _get("/inspections", params=params, base_url=INSPECTION_BASE_URL)
+
+
+def get_inspection_images(params: dict[str, Any] | None = None) -> Any:
+    """GET /images (Inspection Ops Service) — query inspection images.
+
+    Expected filter is inspection_id (matches POST /images's field name),
+    but the exact query parameter name is not yet confirmed live.
+    """
+    return _get("/images", params=params, base_url=INSPECTION_BASE_URL)
+
+
+def create_inspection_image(
+    *,
+    inspection_id: str,
+    image_bytes: bytes,
+    filename: str,
+    facility_elevation: list[str] | None = None,
+    privacy_mask: bool | None = None,
+) -> Any:
+    """POST /images (Inspection Ops Service) — upload an image.
+
+    Uploads to the Media Service and associates the resulting media_id with
+    the given inspection in one call. This is the real create/upload path —
+    the Media Service itself has no upload endpoint at all.
+    """
+    files = {"file": (filename, image_bytes, "application/octet-stream")}
+    data: dict[str, Any] = {"inspection_id": inspection_id}
+    if facility_elevation:
+        # UNCONFIRMED (2026-08-25): trying bracket-suffixed repeated fields
+        # as an alternate array convention. A bare repeated field failed
+        # ("must be array"); a JSON-stringified array passed the type check
+        # but failed a downstream "Invalid facility_elevations" check for
+        # reasons not yet understood — this is the next thing to try before
+        # escalating to Garuda, not a confirmed fix.
+        data["facility_elevation[]"] = facility_elevation
+    if privacy_mask is not None:
+        data["privacy_mask"] = str(privacy_mask).lower()
+    return _post_multipart("/images", files=files, data=data, base_url=INSPECTION_BASE_URL)
 
 
 def _post_json(

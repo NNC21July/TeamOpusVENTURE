@@ -15,9 +15,13 @@ class SummarizeFlightRequest:
 class MediaItem:
     # Trimmed view of a Full_Media record — only what the pipeline needs,
     # not the full raw schema (see Research 2 notes on why).
+    #
+    # No `url` field: confirmed against the Media Service Swagger that
+    # there's no per-item download URL on the object — binary bytes are
+    # fetched by media_id via a separate size-variant endpoint instead
+    # (see rest_client.get_media_bytes).
     media_id: str
     media_type: str
-    url: str | None = None
     captured_at: datetime | None = None
     gps: tuple[float, float] | None = None  # (lat, lon), from exif if present
 

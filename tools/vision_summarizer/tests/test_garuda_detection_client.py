@@ -5,15 +5,16 @@ from tools.vision_summarizer.request_response_schemas import MediaItem
 import pytest
 
 
-def make_media(media_type="image", url="https://media.mydronefleets.com/files/1.jpg") -> MediaItem:
-    return MediaItem(media_id="MEDIA-1", media_type=media_type, url=url)
+def make_media(media_type="image") -> MediaItem:
+    return MediaItem(media_id="MEDIA-1", media_type=media_type)
 
 
 def test_downloads_bytes_then_uploads_and_parses_detections(monkeypatch):
     calls = {}
 
-    def fake_get_media_bytes(url):
-        calls["url"] = url
+    def fake_get_media_bytes(media_id, variant="fullscreen"):
+        calls["media_id"] = media_id
+        calls["variant"] = variant
         return b"fake-image-bytes"
 
     def fake_create_detections(*, image_bytes, filename, labels, created_by):
@@ -34,7 +35,8 @@ def test_downloads_bytes_then_uploads_and_parses_detections(monkeypatch):
     client = GarudaDetectionClient()
     result = client.get_detections_for_media(media=make_media())
 
-    assert calls["url"] == "https://media.mydronefleets.com/files/1.jpg"
+    assert calls["media_id"] == "MEDIA-1"
+    assert calls["variant"] == "fullscreen"
     assert calls["image_bytes"] == b"fake-image-bytes"
     assert len(result) == 1
     assert result[0].object_label == "crack"
@@ -47,14 +49,8 @@ def test_non_image_media_type_raises_unavailable_without_calling_api():
         client.get_detections_for_media(media=make_media(media_type="video"))
 
 
-def test_missing_url_raises_unavailable():
-    client = GarudaDetectionClient()
-    with pytest.raises(DetectionDataUnavailableError):
-        client.get_detections_for_media(media=make_media(url=None))
-
-
 def test_api_error_raises_detection_data_unavailable(monkeypatch):
-    def fake_get_media_bytes(url):
+    def fake_get_media_bytes(media_id, variant="fullscreen"):
         raise rest_client.APIError("network error")
 
     monkeypatch.setattr(rest_client, "get_media_bytes", fake_get_media_bytes)
@@ -65,7 +61,7 @@ def test_api_error_raises_detection_data_unavailable(monkeypatch):
 
 
 def test_polygon_shape_is_parsed(monkeypatch):
-    monkeypatch.setattr(rest_client, "get_media_bytes", lambda url: b"bytes")
+    monkeypatch.setattr(rest_client, "get_media_bytes", lambda media_id, variant="fullscreen": b"bytes")
     monkeypatch.setattr(
         rest_client,
         "create_detections",
