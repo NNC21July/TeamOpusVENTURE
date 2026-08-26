@@ -53,6 +53,7 @@ and Geo AI Config Service Swagger docs):
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -286,25 +287,14 @@ def get_facility_elevations(params: dict[str, Any] | None = None) -> Any:
 def create_facility_elevation(payload: dict[str, Any]) -> Any:
     """POST /elevations (Inspection Ops Service) — create a Facility Elevation.
 
-    CONFIRMED live (2026-08-25): POST /images's facility_elevation param
-    requires a real Facility Elevation ID — omitting it entirely is rejected
-    as "Invalid facility_elevations", despite the field looking optional in
-    the docs (same pattern as Create_Inspection's start_date/end_date).
+    A Facility Elevation is a prerequisite for POST /images's
+    facility_elevations reference — see create_inspection_image.
     """
     return _post_json("/elevations", payload, base_url=INSPECTION_BASE_URL)
 
 
 def update_inspection(inspection_id: str, payload: dict[str, Any]) -> Any:
-    """PATCH /inspections/{inspection_id} (Inspection Ops Service).
-
-    Testing hypothesis (2026-08-25): "Invalid facility_elevations" persisted
-    on POST /images across two independently-different, correctly-typed
-    array encodings, using a real elevation confirmed to exist and belong to
-    the right facility. Suspect Inspection.status needs to be past "draft"
-    (e.g. "inspecting") before images can be attached — undocumented, but
-    matches the pattern of other undocumented-but-real requirements found
-    so far (start_date/end_date, Facility Manager role).
-    """
+    """PATCH /inspections/{inspection_id} (Inspection Ops Service)."""
     return _patch_json(f"/inspections/{inspection_id}", payload, base_url=INSPECTION_BASE_URL)
 
 
@@ -321,8 +311,11 @@ def get_inspections(params: dict[str, Any] | None = None) -> Any:
 def get_inspection_images(params: dict[str, Any] | None = None) -> Any:
     """GET /images (Inspection Ops Service) — query inspection images.
 
-    Expected filter is inspection_id (matches POST /images's field name),
-    but the exact query parameter name is not yet confirmed live.
+    CONFIRMED live (2026-08-26): the filter param is inspection_ids
+    (PLURAL) and is required — "inspection_id" (singular) is rejected as
+    an unknown param, and omitting the filter entirely is rejected as
+    missing a required property. Pass a list; httpx serialises it as
+    repeated query params.
     """
     return _get("/images", params=params, base_url=INSPECTION_BASE_URL)
 
@@ -344,13 +337,14 @@ def create_inspection_image(
     files = {"file": (filename, image_bytes, "application/octet-stream")}
     data: dict[str, Any] = {"inspection_id": inspection_id}
     if facility_elevation:
-        # UNCONFIRMED (2026-08-25): trying bracket-suffixed repeated fields
-        # as an alternate array convention. A bare repeated field failed
-        # ("must be array"); a JSON-stringified array passed the type check
-        # but failed a downstream "Invalid facility_elevations" check for
-        # reasons not yet understood — this is the next thing to try before
-        # escalating to Garuda, not a confirmed fix.
-        data["facility_elevation[]"] = facility_elevation
+        # CONFIRMED (2026-08-26) via a known-working request sample from
+        # Garuda: the real field name is "facility_elevations" (PLURAL) —
+        # the Swagger docs document it as singular ("facility_elevation"),
+        # which is simply wrong/stale. Value is a JSON-stringified array,
+        # e.g. '["6a713e4a565896c2d3961487"]', no brackets on the field name.
+        # This is what every earlier "Invalid facility_elevations" rejection
+        # was actually about — wrong field name, not a format/encoding issue.
+        data["facility_elevations"] = json.dumps(facility_elevation)
     if privacy_mask is not None:
         data["privacy_mask"] = str(privacy_mask).lower()
     return _post_multipart("/images", files=files, data=data, base_url=INSPECTION_BASE_URL)

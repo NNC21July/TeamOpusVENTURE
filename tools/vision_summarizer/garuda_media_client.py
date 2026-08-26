@@ -21,33 +21,36 @@ class GarudaMediaClient:
         except rest_client.APIError as exc:
             raise MediaDataUnavailableError(str(exc)) from exc
 
-        inspection_ids = [
+        inspection_ids = {
             inspection["inspection_id"]
             for inspection in _extract_inspection_list(inspections_data)
             if flight_id in (inspection.get("flight_ids") or [])
-        ]
+        }
         if not inspection_ids:
             return []
 
-        media_items: list[MediaItem] = []
-        for inspection_id in inspection_ids:
-            try:
-                images_data = rest_client.get_inspection_images(
-                    params={"inspection_id": inspection_id}
-                )
-            except rest_client.APIError as exc:
-                raise MediaDataUnavailableError(str(exc)) from exc
+        try:
+            # CONFIRMED live (2026-08-26): the query param is inspection_ids
+            # (plural) and is required — "inspection_id" (singular) is
+            # rejected as unknown, and omitting the filter entirely is
+            # rejected as missing a required property. httpx serialises a
+            # list value as repeated query params (?inspection_ids=a&...=b).
+            images_data = rest_client.get_inspection_images(
+                params={"inspection_ids": list(inspection_ids)}
+            )
+        except rest_client.APIError as exc:
+            raise MediaDataUnavailableError(str(exc)) from exc
 
-            for image in _extract_image_list(images_data):
-                media_id = image.get("media_id")
-                if media_id:
-                    # inspection_image records don't carry exif/timestamp —
-                    # that lives on the underlying Media object. Skipped for
-                    # now (captured_at is only used for best-effort sorting,
-                    # which already falls back gracefully); could be
-                    # enriched later via a get_media_by_id call per item if
-                    # actually needed.
-                    media_items.append(MediaItem(media_id=media_id, media_type="image"))
+        media_items: list[MediaItem] = []
+        for image in _extract_image_list(images_data):
+            media_id = image.get("media_id")
+            if media_id:
+                # inspection_image records don't carry exif/timestamp — that
+                # lives on the underlying Media object. Skipped for now
+                # (captured_at is only used for best-effort sorting, which
+                # already falls back gracefully); could be enriched later
+                # via a get_media_by_id call per item if actually needed.
+                media_items.append(MediaItem(media_id=media_id, media_type="image"))
         return media_items
 
 
