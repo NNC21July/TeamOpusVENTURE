@@ -3,6 +3,7 @@ from datetime import datetime
 from mcp.server.fastmcp.server import FastMCP
 
 from api_client import rest_client
+from governance import approvals
 from governance.gate import governed
 from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
@@ -125,6 +126,47 @@ def list_flights() -> dict:
     except rest_client.APIError as exc:
         return {"error": str(exc)}
     return _shape_flights(data)
+
+
+@mcp.tool()
+def check_approval_status(request_id: str) -> dict:
+    """
+    Check whether a pending action has been approved or denied by a pilot yet.
+
+    Use this after telling the pilot to run approve.py, so you can see what
+    actually happened instead of retrying blind. Returns the action's status:
+      PENDING  — nobody has decided yet; the pilot still needs to run approve.py
+      APPROVED — retry the original tool with approval_request_id set to this id
+      DENIED   — the pilot refused; do not retry, tell them it was denied
+      CONSUMED — already used; approvals are single-use, so a new one is needed
+
+    Read-only: this only reads the approval record. It cannot approve anything —
+    only a human running approve.py in a terminal can do that.
+    """
+    request = approvals.get_request(request_id)
+    if request is None:
+        return {
+            "error": f"No approval request with id {request_id}.",
+            "hint": "The id may be wrong, or the action was never proposed.",
+        }
+
+    next_step = {
+        "PENDING": "Not approved yet. The pilot must run 'python approve.py "
+                   f"approve {request_id} <their_pilot_id>' in a terminal.",
+        "APPROVED": "Approved. Call the original tool again with identical "
+                    f"arguments plus approval_request_id='{request_id}'.",
+        "DENIED": "The pilot denied this. Do not retry it.",
+        "CONSUMED": "Already executed. Approvals are single-use; propose the "
+                    "action again if it needs to happen once more.",
+    }[request.status.value]
+
+    return {
+        "request_id": request.request_id,
+        "action": request.preview,
+        "status": request.status.value,
+        "decided_by": request.pilot_id,
+        "next_step": next_step,
+    }
 
 
 def _shape_summary(response) -> dict:

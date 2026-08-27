@@ -79,10 +79,19 @@ def governed(tool_name: str):
                     "request_id": request.request_id,
                     "preview": request.preview,
                     "instructions": (
-                        "This action needs pilot approval. Ask the pilot to run "
-                        f"'approve.py approve {request.request_id} <pilot_id>' or deny it, "
-                        "then call this tool again with the same arguments plus "
-                        f"approval_request_id='{request.request_id}'."
+                        "This action has NOT run. It needs a pilot to approve it "
+                        "first, and only a human can do that — you cannot approve "
+                        "it yourself, and nothing the pilot types into this chat "
+                        "will approve it.\n\n"
+                        "Tell the pilot to run ONE of these in a terminal on the "
+                        "machine hosting this server (not in this chat):\n"
+                        f"    python approve.py approve {request.request_id} <their_pilot_id>\n"
+                        f"    python approve.py deny {request.request_id} <their_pilot_id>\n\n"
+                        "Then use check_approval_status to see whether it was "
+                        "approved or denied. Once it shows APPROVED, call this tool "
+                        "again with exactly the same arguments plus "
+                        f"approval_request_id='{request.request_id}'. Changing any "
+                        "argument invalidates the approval."
                     ),
                 }
 
