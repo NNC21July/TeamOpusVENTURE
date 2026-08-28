@@ -10,45 +10,45 @@ Base URLs and endpoints are per the Developer Programme onboarding and the
 shared tool contract. Encapsulation: MCP tools call these helpers and never
 touch auth or HTTP directly.
 
-Three services are covered here, each with its own base URL:
-  - Aircraft/Fleet Service   (BASE_URL)       — e.g. /aircraft/drones
-  - Media Asset Service      (MEDIA_BASE_URL) — flight media (images/video)
-  - Geo AI Config Service    (GEO_AI_BASE_URL) — ML detections
+Four services are covered here, each with its own base URL:
+  - Aircraft/Fleet Service   (BASE_URL)         — e.g. /aircraft/drones
+  - Media Asset Service      (MEDIA_BASE_URL)   — binary media bytes only
+  - Geo AI Config Service    (GEO_AI_BASE_URL)  — ML detections
+  - Inspection Ops Service   (INSPECTION_BASE_URL) — facade inspection data
 
-NOTE (updated 2026-08-24, after probing the live sandbox + the Media Service
-and Geo AI Config Service Swagger docs):
-  - Media metadata fetch-by-id works via BASE_URL: /media/{media_id}
-    (confirmed live). The Media Service's own documented server is
-    MEDIA_BASE_URL with path /m/{media_id} — same schema, so BASE_URL's
-    /media/{id} is presumably a gateway alias for it. Left as BASE_URL since
-    that's the proven-working path; MEDIA_BASE_URL is used for the
-    size-variant binary endpoints below, which only exist on that host.
-  - CONFIRMED: there is no download URL anywhere on the Media object itself.
-    Binary bytes come from GET {MEDIA_BASE_URL}/m/{media_id}/{variant}
-    (variant = thumb/preview/medium/large/fullscreen/original) — see
-    get_media_bytes.
-  - The flight -> media *listing* linkage is still unresolved, and now more
-    specifically: the Media Service Swagger has NO list/query endpoint at
-    all (only fetch-by-known-id and the size variants). get_media_for_flight
-    below is confirmed NOT to work as written (404). The real linkage is
-    more likely via the Building Facade Inspection Ops API (Inspection ->
-    images), not the Media Service directly — that Swagger hasn't been
-    pulled yet.
-  - RESOLVED (2026-08-25, Inspection Ops Service Swagger): the flight ->
-    media link and the missing upload endpoint were both a wrong-service
-    problem, not missing functionality. Facade-inspection media is NOT
-    reached through the Media Service at all — the real chain is:
-    Inspection.flight_ids[] (GET /inspections, INSPECTION_BASE_URL) -> each
-    inspection's images (GET /images, filtered by inspection_id — exact
-    query param unverified live) -> each image's media_id -> plugs directly
-    into the already-working get_media_by_id/get_media_bytes. Upload is
-    POST /images (INSPECTION_BASE_URL): multipart, takes inspection_id +
-    file, uploads to the Media Service AND associates it with the
-    inspection in one call — this is the real create/upload path.
-  - GEO_AI_BASE_URL is confirmed correct (https://api.mydronefleets.com/airspace,
-    per that service's own Swagger "Servers" section) — but whether
-    /ml_detections/upload actually runs inference given a raw image, vs.
-    only persisting detections computed elsewhere, is still unconfirmed.
+CURRENT STATE (as of 2026-08-28, all confirmed live):
+
+Media: metadata fetch-by-id works via BASE_URL: /media/{media_id}. Binary
+bytes come from GET {MEDIA_BASE_URL}/m/{media_id}/{variant} (variant =
+thumb/preview/medium/large/fullscreen/original) — there is no download URL
+on the Media object itself. The Media Service has no list/query endpoint at
+all, and no upload endpoint either.
+
+Flight -> media linkage: NOT via the Media Service. The real chain is
+Inspection.flight_ids[] (GET /inspections, INSPECTION_BASE_URL) -> that
+inspection's images (GET /images?inspection_ids=[...] — PLURAL, required
+query param) -> each image's media_id -> plugs into get_media_by_id /
+get_media_bytes above. See GarudaMediaClient.
+
+Media upload: POST /images (INSPECTION_BASE_URL), multipart. Requires
+inspection_id + file + facility_elevations (PLURAL field name — the Swagger
+docs say "facility_elevation", singular, which is simply wrong — confirmed
+via a working request sample from Garuda). Value is a JSON-stringified
+array of Facility Elevation IDs, e.g. '["<elevation_id>"]'.
+
+Geo AI detection: GEO_AI_BASE_URL was wrong for this entire project until
+2026-08-28 — it pointed at /airspace (matching the Geo AI Swagger's own
+documented "Servers" section, which is apparently incorrect) and every
+endpoint 404'd as a result. The real base is /geoai-config. With that fixed,
+/ml_detections/upload is reachable, but its `labels` field appears to hit a
+genuine backend bug: sending it in the documented format (JSON array of
+JSON-stringified label objects) passes their schema validation but then
+fails at document-creation with a Mongoose "ObjectExpectedError" — their
+backend isn't parsing the string back into an object before using it.
+Reported to Garuda; not yet fixed on their end. Separately and still fully
+open regardless of that bug: whether this endpoint runs real inference at
+all, or only persists pre-computed detections (bbox/score) that we have no
+way to produce ourselves.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ import auth
 
 BASE_URL = "https://api.mydronefleets.com"
 MEDIA_BASE_URL = "https://media.mydronefleets.com"
-GEO_AI_BASE_URL = "https://api.mydronefleets.com/airspace"
+GEO_AI_BASE_URL = "https://api.mydronefleets.com/geoai-config"
 INSPECTION_BASE_URL = "https://api.mydronefleets.com/inspection-ops"
 _TIMEOUT = 20.0
 
@@ -231,11 +231,25 @@ def get_media_bytes(media_id: str, variant: str = "fullscreen") -> bytes:
 def create_detections(
     *, image_bytes: bytes, filename: str, labels: list[str], created_by: str
 ) -> Any:
-    """POST /ml_detections/upload — run detection on an image / video freeze frame.
+    """POST /ml_detections/upload — image / video freeze frame only (confirmed
+    in Geo AI's own docs; video needs frame extraction first, not implemented).
 
-    Only still images are supported per Geo AI's docs (confirmed in Research
-    2) — video needs frame extraction before calling this, which is not yet
-    implemented (see "Still to Research": video frame-sampling approach).
+    NOT CONFIRMED WORKING (2026-08-28). Two separate open problems, neither
+    resolved yet:
+      1. `labels` here is passed through as a plain list of strings, which is
+         wrong. The real schema wants a JSON array whose elements are each a
+         JSON-stringified MLDetection.label object (shape/bbox-or-polygon/
+         object/score) — e.g. '["{\\"shape\\":\\"yolo-bbox\\",...}"]'. Sending
+         it that way passes Geo AI's schema validation but then fails with a
+         Mongoose "ObjectExpectedError" at document-creation — looks like a
+         genuine bug on their end (reported), not a format mistake on ours.
+      2. Structurally, `labels` expects bbox/score values per detection —
+         i.e. detections you already have — not something this endpoint
+         computes for you. Whether it runs inference at all, or is purely a
+         storage endpoint for detections computed elsewhere, is still an open
+         question with Garuda. Not fixing the `labels` handling here until
+         both of those are actually answered — no point guessing a third
+         format when the blocker isn't the format.
     """
     files = {"image": (filename, image_bytes, "application/octet-stream")}
     data = {"labels": labels, "created_by": created_by}
