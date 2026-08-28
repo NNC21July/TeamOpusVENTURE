@@ -1,6 +1,7 @@
 """Append-only, hash-chained audit log for governance decisions.
 
-Every risky-tool decision (proposed, approved, denied, executed, blocked)
+Every risky-tool decision (proposed, approved, denied, executed, failed,
+blocked)
 gets one line in governance/state/audit.jsonl. Each line's hash is computed
 over its own fields PLUS the previous line's hash, chaining them together:
 editing or deleting any past line changes every hash after it. verify_chain()

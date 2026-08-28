@@ -12,6 +12,9 @@ does the real function get to run right now, or not?
           and matches this exact call, THEN run the real function.
 
 Every risky decision is written to the audit log, whether it ran or not.
+An approved call is recorded EXECUTED only if the tool actually succeeded;
+if it errored the record is FAILED, so the log never claims a dangerous
+action happened when it did not.
 
 Constraint for tools you decorate
 ---------------------------------
@@ -108,14 +111,34 @@ def governed(tool_name: str):
                 )
                 return {"status": "BLOCKED", "reason": str(exc)}
 
-            result = fn(**params)
-            audit.record_event(
-                AuditEvent.EXECUTED,
+            # The approval is spent either way: single-use is a security
+            # property, not a convenience. What must not happen is the log
+            # claiming a dangerous action ran when it did not.
+            try:
+                result = fn(**params)
+            except Exception:
+                _record_outcome(AuditEvent.FAILED, tool_name, approved_request)
+                raise
+
+            # Tools here report failure by RETURNING {"error": ...} rather than
+            # raising, so a normal return is not evidence the action happened.
+            failed = isinstance(result, dict) and "error" in result
+            _record_outcome(
+                AuditEvent.FAILED if failed else AuditEvent.EXECUTED,
                 tool_name,
-                params_hash=approved_request.params_hash,
-                request_id=approved_request.request_id,
-                pilot_id=approved_request.pilot_id,
+                approved_request,
             )
             return result
         return wrapper
     return decorator
+
+
+def _record_outcome(event: AuditEvent, tool_name: str, request) -> None:
+    """Write the terminal outcome of an approved call to the audit log."""
+    audit.record_event(
+        event,
+        tool_name,
+        params_hash=request.params_hash,
+        request_id=request.request_id,
+        pilot_id=request.pilot_id,
+    )

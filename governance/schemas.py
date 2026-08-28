@@ -26,6 +26,7 @@ class AuditEvent(str, Enum):
     APPROVED = "APPROVED"
     DENIED = "DENIED"
     EXECUTED = "EXECUTED"
+    FAILED = "FAILED"
     BLOCKED = "BLOCKED"
 
 
