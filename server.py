@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from mcp.server.fastmcp.server import FastMCP
 
@@ -13,6 +13,17 @@ from tools.route_airspace_compliance.garuda_airspace_client import GarudaAirspac
 from tools.route_airspace_compliance.output_shaper import shape_route_compliance_response
 from tools.route_airspace_compliance.request_response_schemas import RouteComplianceRequest
 from tools.route_airspace_compliance.service import check_route_airspace_compliance as evaluate_route_airspace_compliance
+from tools.flight_readiness.garuda_aircraft_client import GarudaAircraftClient
+from tools.flight_readiness.output_shaper import shape_flight_readiness_response
+from tools.flight_readiness.request_response_schemas import FlightReadinessRequest
+from tools.flight_readiness.service import check_flight_readiness as evaluate_flight_readiness
+from tools.flight_readiness.sources.nea_client import NeaClient
+from tools.flight_readiness.sources.open_meteo_client import OpenMeteoClient
+from tools.maintenance_status.garuda_maintenance_client import GarudaMaintenanceClient
+from tools.maintenance_status.output_shaper import shape_maintenance_status_response
+from tools.maintenance_status.readiness_bridge import MaintenanceStatusReader
+from tools.maintenance_status.request_response_schemas import MaintenanceStatusRequest
+from tools.maintenance_status.service import get_drone_maintenance_status as evaluate_maintenance_status
 
 mcp = FastMCP("Team-Opus MCP Server")
 
@@ -330,6 +341,68 @@ def takeoff(drone: str, approval_request_id: str | None = None) -> dict:
         "armed": arm_result,
         "takeoff": takeoff_result,
     }
+
+
+@mcp.tool()
+def get_drone_maintenance_status(drone: str) -> dict:
+    """
+    Report whether a drone is due for maintenance.
+
+    Use this to answer "is DRONE-001 due for servicing?", "when was it last
+    serviced?", or "how many hours has this airframe flown?". Give the drone's
+    name, serial number or id.
+
+    Resolves the drone, sums its flight hours from recorded flights, and
+    compares them against its service interval. Returns hours since service,
+    the interval, hours remaining, and an overall status of OK, DUE_SOON,
+    OVERDUE, NEEDS_INFO or UNKNOWN.
+
+    Read-only: it only reads fleet and flight records and changes nothing.
+    Values that could not be read from Plex are reported as null and explained
+    in `assumptions` rather than guessed.
+    """
+    response = evaluate_maintenance_status(
+        request=MaintenanceStatusRequest(drone=drone),
+        client=GarudaMaintenanceClient(),
+        now=datetime.now(timezone.utc),
+    )
+    return shape_maintenance_status_response(response)
+
+
+@mcp.tool()
+def check_flight_readiness(request: FlightReadinessRequest) -> dict:
+    """
+    Check whether a drone can safely fly a given mission at a given time and place.
+
+    Use this to answer "can I fly the Jurong facade job on Tuesday at 9am?",
+    "is it too windy to fly right now?", or "which of our drones can fly
+    tomorrow morning?". Call it once per drone or per date when comparing.
+
+    Give the drone's name or serial, the planned start and end times (with a
+    timezone), the location as longitude and latitude, and the planned altitude
+    above ground in metres. Mission duration in minutes is optional and is
+    derived from the flight window if omitted.
+
+    Compares forecast or current weather against the aircraft's operating
+    limits, checks battery endurance against the planned mission, and confirms
+    the airframe is not overdue for service. Returns a decision of GO,
+    GO_WITH_WARNINGS, NO_GO, NEEDS_INFO or UNKNOWN, with each check's observed
+    values, the thresholds applied, and a confidence level.
+
+    Read-only. It does not book airspace, reserve a flight zone, arm, launch or
+    modify anything. A NO_GO means the mission should not proceed; an UNKNOWN
+    means the assessment could not be completed and must not be read as
+    approval.
+    """
+    response = evaluate_flight_readiness(
+        request=request,
+        aircraft_client=GarudaAircraftClient(),
+        maintenance_reader=MaintenanceStatusReader(client=GarudaMaintenanceClient()),
+        forecast_source=OpenMeteoClient(),
+        observation_source=NeaClient(),
+        now=datetime.now(timezone.utc),
+    )
+    return shape_flight_readiness_response(response)
 
 
 if __name__ == "__main__":
