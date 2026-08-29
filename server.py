@@ -13,12 +13,15 @@ from tools.route_airspace_compliance.garuda_airspace_client import GarudaAirspac
 from tools.route_airspace_compliance.output_shaper import shape_route_compliance_response
 from tools.route_airspace_compliance.request_response_schemas import RouteComplianceRequest
 from tools.route_airspace_compliance.service import check_route_airspace_compliance as evaluate_route_airspace_compliance
+from tools import demo_fleet
+from tools.flight_readiness.demo_client import DemoAircraftClient
 from tools.flight_readiness.garuda_aircraft_client import GarudaAircraftClient
 from tools.flight_readiness.output_shaper import shape_flight_readiness_response
 from tools.flight_readiness.request_response_schemas import FlightReadinessRequest
 from tools.flight_readiness.service import check_flight_readiness as evaluate_flight_readiness
 from tools.flight_readiness.sources.nea_client import NeaClient
 from tools.flight_readiness.sources.open_meteo_client import OpenMeteoClient
+from tools.maintenance_status.demo_client import DemoMaintenanceClient
 from tools.maintenance_status.garuda_maintenance_client import GarudaMaintenanceClient
 from tools.maintenance_status.output_shaper import shape_maintenance_status_response
 from tools.maintenance_status.readiness_bridge import MaintenanceStatusReader
@@ -343,6 +346,35 @@ def takeoff(drone: str, approval_request_id: str | None = None) -> dict:
     }
 
 
+def _aircraft_client():
+    """The real Plex client, or the seeded fleet when demo mode is on."""
+    return DemoAircraftClient() if demo_fleet.demo_mode_enabled() else GarudaAircraftClient()
+
+
+def _maintenance_client():
+    return (
+        DemoMaintenanceClient()
+        if demo_fleet.demo_mode_enabled()
+        else GarudaMaintenanceClient()
+    )
+
+
+def _tag_if_simulated(payload: dict) -> dict:
+    """Mark any response built from seeded data, so it is never mistaken for real.
+
+    The notice goes into `assumptions`, which both tools already surface, so
+    the model reads it alongside every other caveat and can repeat it to the
+    pilot rather than presenting simulated numbers as fact.
+    """
+    if not demo_fleet.demo_mode_enabled():
+        return payload
+    assumptions = list(payload.get("assumptions") or [])
+    assumptions.insert(0, demo_fleet.SIMULATED_NOTICE)
+    payload["assumptions"] = assumptions
+    payload["data_source"] = "simulated_fleet"
+    return payload
+
+
 @mcp.tool()
 def get_drone_maintenance_status(drone: str) -> dict:
     """
@@ -363,10 +395,10 @@ def get_drone_maintenance_status(drone: str) -> dict:
     """
     response = evaluate_maintenance_status(
         request=MaintenanceStatusRequest(drone=drone),
-        client=GarudaMaintenanceClient(),
+        client=_maintenance_client(),
         now=datetime.now(timezone.utc),
     )
-    return shape_maintenance_status_response(response)
+    return _tag_if_simulated(shape_maintenance_status_response(response))
 
 
 @mcp.tool()
@@ -396,13 +428,13 @@ def check_flight_readiness(request: FlightReadinessRequest) -> dict:
     """
     response = evaluate_flight_readiness(
         request=request,
-        aircraft_client=GarudaAircraftClient(),
-        maintenance_reader=MaintenanceStatusReader(client=GarudaMaintenanceClient()),
+        aircraft_client=_aircraft_client(),
+        maintenance_reader=MaintenanceStatusReader(client=_maintenance_client()),
         forecast_source=OpenMeteoClient(),
         observation_source=NeaClient(),
         now=datetime.now(timezone.utc),
     )
-    return shape_flight_readiness_response(response)
+    return _tag_if_simulated(shape_flight_readiness_response(response))
 
 
 if __name__ == "__main__":
