@@ -18,6 +18,7 @@ def shape_maintenance_status_response(response: MaintenanceStatusResponse) -> di
 
     for key, value in (
         ("drone_id", response.drone_id),
+        ("drone_name", response.drone_name),
         ("model", response.model),
         ("last_service_date", response.last_service_date),
         ("last_service_type", response.last_service_type),
@@ -25,8 +26,9 @@ def shape_maintenance_status_response(response: MaintenanceStatusResponse) -> di
         ("service_interval_hours", response.service_interval_hours),
         ("next_due_hours", response.next_due_hours),
         ("next_due_date", response.next_due_date),
-        ("flights_counted", response.flights_counted),
+        ("flights_since_service", response.flights_counted),
         ("message", response.message),
+        ("note", response.note),
     ):
         if value is not None:
             shaped[key] = _serialise(value)

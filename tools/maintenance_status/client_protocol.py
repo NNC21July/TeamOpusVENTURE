@@ -3,6 +3,7 @@ from typing import Protocol
 from tools.maintenance_status.request_response_schemas import (
     DroneRef,
     FlightRecord,
+    ServicePlan,
     ServiceRecord,
 )
 
@@ -33,4 +34,7 @@ class MaintenanceClient(Protocol):
         ...
 
     def get_service_records(self, *, drone: DroneRef) -> list[ServiceRecord]:
+        ...
+
+    def get_service_plan(self, *, drone: DroneRef) -> ServicePlan | None:
         ...
