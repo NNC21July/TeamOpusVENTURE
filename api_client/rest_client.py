@@ -168,8 +168,34 @@ def get_nfzs(params: dict[str, Any] | None = None) -> Any:
 
 
 def get_flights(params: dict[str, Any] | None = None) -> Any:
-    """GET /aircraft/flights — recorded flights. Returns the raw `data` payload."""
+    """GET /aircraft/flights — recorded flights. Returns the raw `data` payload.
+
+    Supports `start_date` / `end_date` filtering in epoch milliseconds, per the
+    shared tool contract, so callers can ask for flights since a service date
+    rather than pulling everything and filtering client-side.
+    """
     return _get("/aircraft/flights", params=params)
+
+
+def get_maintenance_records(params: dict[str, Any] | None = None) -> Any:
+    """GET /aircraft/maintenance — logged service records.
+
+    Plex's Maintenance feature is manual record capture, so these are entries a
+    technician logged rather than anything derived. Whether the endpoint filters
+    by `drone_id` is UNCONFIRMED — pass it and filter client-side as well.
+    """
+    return _get("/aircraft/maintenance", params=params)
+
+
+def get_maintenance_plans(params: dict[str, Any] | None = None) -> Any:
+    """GET /aircraft/maintenance-plans — service intervals.
+
+    The plan is what turns accumulated flight hours into a verdict, e.g.
+    "service every 100 flight hours". Field names are UNCONFIRMED against the
+    live sandbox; callers should treat a missing interval as unknown rather
+    than substituting a default.
+    """
+    return _get("/aircraft/maintenance-plans", params=params)
 
 
 def get_media_by_id(media_id: str) -> Any:

@@ -104,13 +104,17 @@ def check_flight_readiness(
 
     duration, duration_derived = _mission_duration(request)
 
-    source = _select_weather_source(
-        request=request,
-        now=now,
-        forecast_source=forecast_source,
-        observation_source=observation_source,
-    )
-    weather = _fetch_weather(source, request)
+    # Without the airframe there are no limits to compare weather against, so
+    # fetching a forecast we would only discard just adds latency.
+    weather = None
+    if aircraft is not None:
+        source = _select_weather_source(
+            request=request,
+            now=now,
+            forecast_source=forecast_source,
+            observation_source=observation_source,
+        )
+        weather = _fetch_weather(source, request)
 
     checks = _run_predictors(
         aircraft=aircraft,
@@ -164,20 +168,51 @@ def _run_predictors(
 ) -> tuple[CheckDetail, ...]:
     if aircraft is None:
         # Without the airframe there are no limits to compare anything against.
+        # Each message says what is missing for that specific factor rather
+        # than repeating "Aircraft Service was unavailable" six times, which
+        # reads as though the weather source itself had failed.
         return tuple(
             CheckDetail(
                 check_id=check_id,
                 category=category,
                 result=CheckResult.UNAVAILABLE,
-                message="Aircraft Service was unavailable.",
+                message=message,
             )
-            for check_id, category in (
-                ("WX-001", "weather_wind"),
-                ("WX-002", "weather_precipitation"),
-                ("WX-003", "weather_temperature"),
-                ("BAT-001", "battery_endurance"),
-                ("MNT-001", "airworthiness"),
-                ("MNT-002", "aircraft_state"),
+            for check_id, category, message in (
+                (
+                    "WX-001",
+                    "weather_wind",
+                    "Aircraft wind limits could not be read, so wind could not "
+                    "be assessed against them.",
+                ),
+                (
+                    "WX-002",
+                    "weather_precipitation",
+                    "Aircraft precipitation tolerance could not be read.",
+                ),
+                (
+                    "WX-003",
+                    "weather_temperature",
+                    "Aircraft operating temperature range could not be read.",
+                ),
+                (
+                    "BAT-001",
+                    "battery_endurance",
+                    "Aircraft rated flight time could not be read, so endurance "
+                    "could not be assessed.",
+                ),
+                (
+                    "MNT-001",
+                    "airworthiness",
+                    "The drone could not be resolved, so its service history "
+                    "was not read.",
+                ),
+                (
+                    "MNT-002",
+                    "aircraft_state",
+                    "Aircraft Service was unavailable, so the drone's readiness "
+                    "state is unknown.",
+                ),
             )
         )
 

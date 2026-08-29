@@ -33,19 +33,27 @@ from tools.maintenance_status.request_response_schemas import (
     DroneRef,
     MaintenanceStatusRequest,
     MaintenanceStatusResponse,
+    ServicePlan,
     ServiceRecord,
 )
-from tools.maintenance_status.specs.service_plans import get_service_plan
+from tools.maintenance_status.specs.service_plans import (
+    get_service_plan as get_local_service_plan,
+)
 from tools.maintenance_status.status_rules import derive_status
 from tools.maintenance_status.status_types import MaintenanceStatus
 
 NO_MAINTENANCE_ENDPOINT = (
-    "Plex exposes no maintenance endpoint, so total accumulated flight hours "
-    "are treated as hours since service."
+    "No service record was found for this airframe, so total accumulated "
+    "flight hours are treated as hours since service."
 )
 LOCAL_SERVICE_PLAN = (
-    "Service interval applied from the local service plan table, not from "
-    "Plex; not yet confirmed with client."
+    "Plex had no maintenance plan for this airframe, so the service interval "
+    "came from the local specs table; not yet confirmed with client."
+)
+NOT_A_PREDICTION = (
+    "Status is derived from service records plus summed flight durations. "
+    "This is not a failure prediction — that would need historical failure "
+    "data, which the sandbox does not have."
 )
 NO_CALENDAR_CHECK = (
     "No service date on record, so the calendar portion of the check was "
@@ -110,7 +118,7 @@ def get_drone_maintenance_status(
     since = last_service.serviced_on if last_service else None
     hours = sum_flight_hours(flights, since=since)
 
-    plan = get_service_plan(drone.model)
+    plan, plan_assumptions = _resolve_plan(client, drone)
     verdict = derive_status(
         hours_since_service=hours.hours,
         plan=plan,
@@ -118,9 +126,7 @@ def get_drone_maintenance_status(
         today=now.date(),
     )
 
-    assumptions = list(service_assumptions)
-    if plan is not None:
-        assumptions.append(LOCAL_SERVICE_PLAN)
+    assumptions = list(service_assumptions) + plan_assumptions
     if hours.flights_skipped:
         assumptions.append(
             f"{hours.flights_skipped} flight record(s) had no usable duration "
@@ -130,6 +136,7 @@ def get_drone_maintenance_status(
     return MaintenanceStatusResponse(
         status=verdict.status,
         drone_id=drone.drone_id,
+        drone_name=drone.name,
         model=drone.model,
         last_service_date=since,
         last_service_type=last_service.service_type if last_service else None,
@@ -141,8 +148,28 @@ def get_drone_maintenance_status(
         flights_counted=hours.flights_counted,
         assumptions=tuple(assumptions),
         message=verdict.message,
+        note=NOT_A_PREDICTION,
         data_checked_at=now,
     )
+
+
+def _resolve_plan(
+    client: MaintenanceClient, drone: DroneRef
+) -> tuple[ServicePlan | None, list[str]]:
+    """Plex's own plan first, the local table only if Plex has none."""
+    try:
+        plan = client.get_service_plan(drone=drone)
+    except ServiceRecordsUnavailableError:
+        plan = None
+
+    if plan is not None and plan.interval_hours is not None:
+        return plan, []
+
+    local = get_local_service_plan(drone.model)
+    if local is not None:
+        return local, [LOCAL_SERVICE_PLAN]
+
+    return None, []
 
 
 def _read_service_records(

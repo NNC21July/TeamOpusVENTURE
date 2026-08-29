@@ -107,12 +107,12 @@ def test_hours_source_distinguishes_an_aggregate() -> None:
 
 def test_missing_endpoint_is_recorded_as_an_assumption() -> None:
     response = run()
-    assert any("no maintenance endpoint" in a.lower() for a in response.assumptions)
+    assert any("no service record was found" in a.lower() for a in response.assumptions)
     assert any("calendar" in a.lower() for a in response.assumptions)
 
 
 def test_local_service_plan_is_flagged() -> None:
-    assert any("local service plan" in a.lower() for a in run().assumptions)
+    assert any("local specs table" in a.lower() for a in run().assumptions)
 
 
 def test_no_service_record_means_no_calendar_dates() -> None:

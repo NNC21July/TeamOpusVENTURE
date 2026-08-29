@@ -16,6 +16,7 @@ from tools.maintenance_status.client_protocol import (
     DroneNotFoundError,
     FleetDataUnavailableError,
     MaintenanceClient,
+    ServiceRecordsUnavailableError,
 )
 from tools.maintenance_status.garuda_maintenance_client import (
     GarudaMaintenanceClient,
@@ -69,10 +70,45 @@ FLIGHTS_PAYLOAD = {
 }
 
 
+MAINTENANCE_PAYLOAD = {
+    "maintenance": [
+        {
+            "drone_id": "DRONE-001",
+            "service_date": "2026-07-30",
+            "service_type": "100h inspection",
+            "airframe_hours": 1204.0,
+        },
+        {
+            "drone_id": "DRONE-001",
+            "service_date": "2026-02-14",
+            "service_type": "basic",
+        },
+        {"drone_id": "DRONE-002", "service_date": "2026-06-01", "type": "basic"},
+    ]
+}
+
+PLANS_PAYLOAD = {
+    "maintenance_plans": [
+        {
+            "drone_id": "DRONE-001",
+            "name": "Cerana standard",
+            "interval_hours": 100,
+            "interval_months": 6,
+        }
+    ]
+}
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(rest_client, "get_drones", lambda *a, **k: DRONES_PAYLOAD)
     monkeypatch.setattr(rest_client, "get_flights", lambda *a, **k: FLIGHTS_PAYLOAD)
+    monkeypatch.setattr(
+        rest_client, "get_maintenance_records", lambda *a, **k: MAINTENANCE_PAYLOAD
+    )
+    monkeypatch.setattr(
+        rest_client, "get_maintenance_plans", lambda *a, **k: PLANS_PAYLOAD
+    )
     return GarudaMaintenanceClient()
 
 
@@ -163,9 +199,72 @@ def test_flights_api_error_becomes_fleet_unavailable(client, monkeypatch) -> Non
 # --- service records --------------------------------------------------------
 
 
-def test_service_records_are_empty_not_an_error(client) -> None:
-    # No Plex service exposes maintenance records. An empty list means "no
-    # recorded service", which the status rules handle by skipping the
-    # calendar check — it is not a failure.
+def test_reads_service_records_for_the_right_drone(client) -> None:
     records = client.get_service_records(drone=client.get_drone(drone="Falcon 1"))
-    assert records == []
+    assert len(records) == 2
+    assert {r.serviced_on.isoformat() for r in records} == {"2026-07-30", "2026-02-14"}
+
+
+def test_service_record_fields_are_mapped(client) -> None:
+    records = client.get_service_records(drone=client.get_drone(drone="Falcon 1"))
+    latest = max(records, key=lambda r: r.serviced_on)
+    assert latest.service_type == "100h inspection"
+    assert latest.airframe_hours_at_service == pytest.approx(1204.0)
+
+
+def test_records_for_other_drones_are_excluded(client) -> None:
+    records = client.get_service_records(drone=client.get_drone(drone="Falcon 2"))
+    assert [r.serviced_on.isoformat() for r in records] == ["2026-06-01"]
+
+
+def test_records_without_a_date_are_dropped(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        rest_client,
+        "get_maintenance_records",
+        lambda *a, **k: {"maintenance": [{"drone_id": "DRONE-001", "type": "basic"}]},
+    )
+    assert client.get_service_records(drone=client.get_drone(drone="Falcon 1")) == []
+
+
+def test_empty_records_are_not_an_error(client, monkeypatch) -> None:
+    # An airframe with no logged service is normal, not a failure. The status
+    # rules handle it by skipping the calendar check.
+    monkeypatch.setattr(rest_client, "get_maintenance_records", lambda *a, **k: {})
+    assert client.get_service_records(drone=client.get_drone(drone="Falcon 1")) == []
+
+
+def test_maintenance_api_error_becomes_service_records_unavailable(
+    client, monkeypatch
+) -> None:
+    def boom(*args, **kwargs):
+        raise rest_client.APIError("maintenance down")
+
+    monkeypatch.setattr(rest_client, "get_maintenance_records", boom)
+    with pytest.raises(ServiceRecordsUnavailableError):
+        client.get_service_records(drone=client.get_drone(drone="Falcon 1"))
+
+
+# --- service plans ----------------------------------------------------------
+
+
+def test_reads_the_plex_service_plan(client) -> None:
+    plan = client.get_service_plan(drone=client.get_drone(drone="Falcon 1"))
+    assert plan is not None
+    assert plan.interval_hours == pytest.approx(100.0)
+    assert plan.interval_months == 6
+    assert plan.source == "plex_maintenance_plan"
+
+
+def test_no_plan_for_this_drone_returns_none(client) -> None:
+    # None lets the service layer fall back to the local specs table rather
+    # than treating an absent plan as an absent interval.
+    assert client.get_service_plan(drone=client.get_drone(drone="Falcon 2")) is None
+
+
+def test_plan_without_an_interval_is_ignored(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        rest_client,
+        "get_maintenance_plans",
+        lambda *a, **k: {"maintenance_plans": [{"drone_id": "DRONE-001", "name": "x"}]},
+    )
+    assert client.get_service_plan(drone=client.get_drone(drone="Falcon 1")) is None

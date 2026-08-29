@@ -18,10 +18,13 @@ Two consequences shape this file:
 
 from typing import Any
 
+from datetime import date, datetime
+
 from api_client import rest_client
 from tools.maintenance_status.client_protocol import (
     DroneNotFoundError,
     FleetDataUnavailableError,
+    ServiceRecordsUnavailableError,
 )
 from tools.maintenance_status.hours_calculator import (
     duration_seconds_from_parts,
@@ -30,8 +33,11 @@ from tools.maintenance_status.hours_calculator import (
 from tools.maintenance_status.request_response_schemas import (
     DroneRef,
     FlightRecord,
+    ServicePlan,
     ServiceRecord,
 )
+
+PLEX_SOURCE = "plex_maintenance_plan"
 
 
 class GarudaMaintenanceClient:
@@ -76,14 +82,50 @@ class GarudaMaintenanceClient:
         return records
 
     def get_service_records(self, *, drone: DroneRef) -> list[ServiceRecord]:
-        """Always empty: no Plex service exposes maintenance records.
+        """Read logged service records from GET /aircraft/maintenance.
 
-        Deliberately not an error. An empty list means "this airframe has no
-        recorded service", which the status rules already handle by skipping
-        the calendar check. When a maintenance endpoint appears, this is the
-        one method that needs to change.
+        Whether the endpoint filters by drone_id is unconfirmed, so the filter
+        is passed AND applied again client-side. An empty list is not an error:
+        it means this airframe has no recorded service, which the status rules
+        handle by skipping the calendar check.
         """
-        return []
+        try:
+            payload = rest_client.get_maintenance_records(
+                params={"drone_id": drone.drone_id}
+            )
+        except rest_client.APIError as exc:
+            raise ServiceRecordsUnavailableError(str(exc)) from exc
+
+        records: list[ServiceRecord] = []
+        for raw in _iter_records(payload, "maintenance"):
+            if not _belongs_to(raw, drone):
+                continue
+            record = _to_service_record(raw)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def get_service_plan(self, *, drone: DroneRef) -> ServicePlan | None:
+        """Read the service interval from GET /aircraft/maintenance-plans.
+
+        Returns None when Plex has no plan for this airframe, which lets the
+        service layer fall back to the local specs table rather than treating
+        an absent plan as an absent interval.
+        """
+        try:
+            payload = rest_client.get_maintenance_plans(
+                params={"drone_id": drone.drone_id}
+            )
+        except rest_client.APIError as exc:
+            raise ServiceRecordsUnavailableError(str(exc)) from exc
+
+        for raw in _iter_records(payload, "maintenance_plans"):
+            if not _belongs_to(raw, drone):
+                continue
+            plan = _to_service_plan(raw, drone)
+            if plan is not None and plan.interval_hours is not None:
+                return plan
+        return None
 
 
 def _to_drone_ref(raw: dict[str, Any]) -> DroneRef:
@@ -121,6 +163,100 @@ def _to_flight_record(raw: dict[str, Any]) -> FlightRecord:
         flown_on=epoch_ms_to_datetime(raw.get("date")),
         duration_seconds=duration_seconds_from_parts(raw.get("duration")),
     )
+
+
+def _belongs_to(raw: dict[str, Any], drone: DroneRef) -> bool:
+    """True when a record is for this drone, or carries no drone reference.
+
+    The endpoints may already filter by drone_id, in which case every record
+    belongs. A record with no drone field at all is kept rather than dropped:
+    dropping it could hide a service that did happen, and reporting an airframe
+    as unserviced when it was serviced is the wrong direction to be wrong in.
+    """
+    for key in ("drone_id", "drone", "aircraft_id"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            value = value.get("drone_id") or value.get("id") or value.get("name")
+        if isinstance(value, str) and value.strip():
+            candidates = {
+                item.strip().casefold()
+                for item in (drone.drone_id, drone.name, drone.serial_number)
+                if isinstance(item, str) and item.strip()
+            }
+            return value.strip().casefold() in candidates
+    return True
+
+
+def _to_service_record(raw: dict[str, Any]) -> ServiceRecord | None:
+    serviced_on = _to_date(
+        _first(raw, ("serviced_on", "service_date", "date", "completed_at", "performed_at"))
+    )
+    if serviced_on is None:
+        return None
+
+    service_type = _first(raw, ("service_type", "type", "name", "description"))
+    hours = _first(raw, ("airframe_hours", "hours_at_service", "total_flight_hours"))
+
+    return ServiceRecord(
+        serviced_on=serviced_on,
+        # Free text from an API is data, never an instruction. It is carried
+        # through as a plain label and never interpreted.
+        service_type=str(service_type) if service_type is not None else None,
+        airframe_hours_at_service=_to_float(hours),
+    )
+
+
+def _to_service_plan(raw: dict[str, Any], drone: DroneRef) -> ServicePlan | None:
+    interval_hours = _to_float(
+        _first(raw, ("interval_hours", "service_interval_hours", "hours", "interval"))
+    )
+    interval_months = _to_float(
+        _first(raw, ("interval_months", "service_interval_months", "months"))
+    )
+    name = _first(raw, ("plan_name", "name", "title"))
+
+    if interval_hours is None and interval_months is None:
+        return None
+
+    return ServicePlan(
+        model=drone.model or "unknown",
+        interval_hours=interval_hours,
+        interval_months=int(interval_months) if interval_months is not None else None,
+        plan_name=str(name) if name is not None else None,
+        source=PLEX_SOURCE,
+    )
+
+
+def _to_date(value: Any) -> date | None:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        parsed = epoch_ms_to_datetime(value)
+        return parsed.date() if parsed else None
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _to_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first(raw: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if raw.get(key) is not None:
+            return raw[key]
+    return None
 
 
 def _iter_records(payload: Any, key: str):

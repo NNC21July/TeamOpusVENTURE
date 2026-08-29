@@ -6,6 +6,7 @@ from tools.maintenance_status.client_protocol import (
 from tools.maintenance_status.request_response_schemas import (
     DroneRef,
     FlightRecord,
+    ServicePlan,
     ServiceRecord,
 )
 
@@ -16,6 +17,7 @@ class FakeMaintenanceClient:
         drone: DroneRef | None = None,
         flights: list[FlightRecord] | None = None,
         service_records: list[ServiceRecord] | None = None,
+        service_plan: ServicePlan | None = None,
         *,
         not_found: bool = False,
         fleet_unavailable: bool = False,
@@ -27,6 +29,9 @@ class FakeMaintenanceClient:
         self._service_records = (
             list(service_records) if service_records is not None else []
         )
+        # None means Plex has no plan for this drone, so the service layer
+        # falls back to the local specs table.
+        self._service_plan = service_plan
         self._not_found = not_found
         self._fleet_unavailable = fleet_unavailable
         self._flights_unavailable = flights_unavailable
@@ -54,3 +59,10 @@ class FakeMaintenanceClient:
                 "Fake maintenance service is unavailable"
             )
         return list(self._service_records)
+
+    def get_service_plan(self, *, drone: DroneRef) -> ServicePlan | None:
+        if self._service_records_unavailable:
+            raise ServiceRecordsUnavailableError(
+                "Fake maintenance service is unavailable"
+            )
+        return self._service_plan

@@ -35,6 +35,20 @@ class FlightRecord:
 
 
 @dataclass(frozen=True)
+class ServicePlan:
+    # A service interval. Sourced from GET /aircraft/maintenance-plans when
+    # Plex has one, otherwise from the local specs table.
+    #
+    # None means the plan does not state it. Never substitute a permissive
+    # default: an unknown interval must surface as NEEDS_INFO.
+    model: str
+    interval_hours: float | None = None
+    interval_months: int | None = None
+    plan_name: str | None = None
+    source: str | None = None
+
+
+@dataclass(frozen=True)
 class ServiceRecord:
     # A completed service. No Plex endpoint supplies these today — the type
     # exists so the calculator and the status rules can already handle them
@@ -48,6 +62,7 @@ class ServiceRecord:
 class MaintenanceStatusResponse:
     status: MaintenanceStatus
     drone_id: str | None = None
+    drone_name: str | None = None
     model: str | None = None
     last_service_date: date | None = None
     last_service_type: str | None = None
@@ -62,4 +77,6 @@ class MaintenanceStatusResponse:
     missing_inputs: tuple[str, ...] = ()
     assumptions: tuple[str, ...] = ()
     message: str | None = None
+    # Standing caveat that this is a status tool, not a failure prediction.
+    note: str | None = None
     data_checked_at: datetime | None = None
