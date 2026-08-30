@@ -32,8 +32,52 @@ from tools.flight_readiness.request_response_schemas import (
 )
 from tools.flight_readiness.specs.model_limits import ModelLimits, get_model_limits
 
-# UNCONFIRMED. Populate from GET /aircraft/drone-models once credentials exist.
-MODEL_ID_TO_NAME: dict[str, str] = {}
+# Model ids seen in the NTU sandbox fleet, confirmed against
+# GET /aircraft/drone-models. This is a cache, not the source of truth: any id
+# not listed is resolved live through the catalogue and added here.
+MODEL_ID_TO_NAME: dict[str, str] = {
+    "3f9d721a48c2b08c1fd03bc67b03d88f": "Cerana ONE Pro",
+    "520a86d7e4137e76bcf4a9f2134cf2dd": "Garuda Robotics V220",
+}
+
+# Flight time in minutes, as published by Plex on the model record. Populated
+# alongside the name whenever a model is resolved.
+MODEL_ID_TO_FLIGHT_TIME: dict[str, float] = {
+    "3f9d721a48c2b08c1fd03bc67b03d88f": 42.0,
+}
+
+
+def resolve_model_from_catalogue(drone_model_id: str) -> tuple[str | None, float | None]:
+    """Look a model id up in Plex, caching the result.
+
+    Called only on a cache miss, so a fleet of known models costs no extra
+    requests. Failure is not an error: an unresolvable model means the
+    predictors report UNAVAILABLE, which is the correct conservative outcome.
+    """
+    if not drone_model_id:
+        return None, None
+    if drone_model_id in MODEL_ID_TO_NAME:
+        return (
+            MODEL_ID_TO_NAME[drone_model_id],
+            MODEL_ID_TO_FLIGHT_TIME.get(drone_model_id),
+        )
+
+    try:
+        from api_client import rest_client
+
+        model = rest_client.get_drone_model(drone_model_id)
+    except Exception:
+        return None, None
+
+    name = model.get("name") if isinstance(model, dict) else None
+    flight_time = _as_float(model.get("max_flight_time")) if isinstance(model, dict) else None
+
+    if isinstance(name, str) and name.strip():
+        MODEL_ID_TO_NAME[drone_model_id] = name.strip()
+        if flight_time is not None:
+            MODEL_ID_TO_FLIGHT_TIME[drone_model_id] = flight_time
+        return name.strip(), flight_time
+    return None, flight_time
 
 # Candidate key names for each limit, tried in order. Plex may nest these
 # under the drone, under a model sub-object, or not expose them at all.
@@ -70,7 +114,8 @@ def resolve_model_name(raw: dict[str, Any]) -> str | None:
             return value.strip()
     model_id = raw.get("drone_model_id")
     if isinstance(model_id, str):
-        return MODEL_ID_TO_NAME.get(model_id)
+        name, _ = resolve_model_from_catalogue(model_id)
+        return name
     return None
 
 
@@ -128,6 +173,14 @@ def to_battery_record(raw: dict[str, Any] | None) -> BatteryRecord:
 def _resolve_limits(
     raw: dict[str, Any], model_name: str | None
 ) -> tuple[ModelLimits, str | None]:
+    """Merge what Plex publishes with what only the local table knows.
+
+    Verified against the live sandbox: a Plex drone model carries
+    `max_flight_time` and nothing else. Wind resistance, temperature range and
+    precipitation tolerance exist in no Plex field, so they can only come from
+    the local table. Neither source is complete on its own, so they are merged
+    and `limits_source` records which contributed.
+    """
     nested = raw.get("drone_model") if isinstance(raw.get("drone_model"), dict) else {}
     merged = {**raw, **nested}
 
@@ -135,12 +188,40 @@ def _resolve_limits(
         field: _as_float(_first(merged, keys)) for field, keys in _LIMIT_KEYS.items()
     }
 
-    if any(value is not None for value in found.values()):
-        return ModelLimits(model=model_name or "unknown", **found), "plex"
+    # A drone record references its model by id, so the authoritative flight
+    # time lives on the model record rather than the drone.
+    model_id = raw.get("drone_model_id")
+    if found["max_flight_time_min"] is None and isinstance(model_id, str):
+        _, catalogue_flight_time = resolve_model_from_catalogue(model_id)
+        if catalogue_flight_time is not None:
+            found["max_flight_time_min"] = catalogue_flight_time
 
+    from_plex = any(value is not None for value in found.values())
     local = get_model_limits(model_name)
+
     if local is not None:
-        return local, "local_specs"
+        merged_limits = ModelLimits(
+            model=local.model,
+            # Plex wins where it publishes a value; the local table fills the
+            # three limits Plex does not expose at all.
+            max_wind_resistance_ms=found["max_wind_resistance_ms"]
+            or local.max_wind_resistance_ms,
+            max_flight_time_min=found["max_flight_time_min"]
+            or local.max_flight_time_min,
+            operating_temp_min_c=found["operating_temp_min_c"]
+            if found["operating_temp_min_c"] is not None
+            else local.operating_temp_min_c,
+            operating_temp_max_c=found["operating_temp_max_c"]
+            if found["operating_temp_max_c"] is not None
+            else local.operating_temp_max_c,
+            precipitation_tolerance_mm_h=found["precipitation_tolerance_mm_h"]
+            if found["precipitation_tolerance_mm_h"] is not None
+            else local.precipitation_tolerance_mm_h,
+        )
+        return merged_limits, "plex+local_specs" if from_plex else "local_specs"
+
+    if from_plex:
+        return ModelLimits(model=model_name or "unknown", **found), "plex"
 
     # Neither source knows this airframe. Returning empty limits is correct:
     # the predictors turn missing limits into UNAVAILABLE, never into "fine".

@@ -1,16 +1,21 @@
-"""Local fallback table of per-model operating limits.
+"""Local table of per-model operating limits.
 
-Used only when Plex does not expose limits for a model. A record sourced from
-here must be marked `limits_source="local_specs"` on the AircraftRecord so the
-output can say the numbers were locally sourced.
+RESOLVED against the live sandbox: Plex exposes `max_flight_time` on a drone
+model and nothing else. There is no wind resistance, no operating temperature
+range and no precipitation tolerance anywhere in the model record. So this
+table is not a fallback for all four limits — it is the ONLY source for three
+of them, and Plex wins on the fourth.
 
-PLACEHOLDER VALUES. Two things are still unverified: which models are actually
-in the Garuda fleet, and whether Plex exposes limits at all. Every number below
-must be replaced from the manufacturer datasheet before this is trusted.
+The adapter reads `max_flight_time` from Plex when present and takes the rest
+from here, marking the record `limits_source="plex+local_specs"` so the output
+says which numbers came from where.
 
-Deliberately conservative where a datasheet figure is ambiguous: a value that is
-too strict produces a false NO_GO, which is recoverable. Too permissive produces
-a false GO, which is not.
+Wind, temperature and precipitation figures below are still PLACEHOLDERS from
+general small-UAS practice and must be replaced from manufacturer datasheets.
+
+Deliberately conservative where a figure is ambiguous: too strict produces a
+false NO_GO, which is recoverable. Too permissive produces a false GO, which
+is not.
 """
 
 from dataclasses import dataclass
@@ -31,6 +36,29 @@ class ModelLimits:
 # Keyed by the model string as Plex reports it. Lookup is case-insensitive and
 # whitespace-tolerant; see get_model_limits below.
 MODEL_LIMITS: dict[str, ModelLimits] = {
+    # --- models actually present in the NTU sandbox fleet --------------------
+    # max_flight_time comes from Plex (42 min for the Cerana ONE Pro) and is
+    # repeated here only so the table stands alone if Plex omits it.
+    "cerana one pro": ModelLimits(
+        model="Cerana ONE Pro",
+        max_wind_resistance_ms=12.0,
+        max_flight_time_min=42.0,
+        operating_temp_min_c=-10.0,
+        operating_temp_max_c=45.0,
+        precipitation_tolerance_mm_h=0.0,
+    ),
+    "garuda robotics v220": ModelLimits(
+        model="Garuda Robotics V220",
+        # A 15 kg fixed-wing tolerates more wind than a quadcopter. Plex does
+        # not publish a flight time for this model, so it stays None and the
+        # endurance check reports UNAVAILABLE rather than guessing.
+        max_wind_resistance_ms=15.0,
+        max_flight_time_min=None,
+        operating_temp_min_c=-10.0,
+        operating_temp_max_c=45.0,
+        precipitation_tolerance_mm_h=0.0,
+    ),
+    # --- speculative entries, kept for models not in this sandbox -----------
     "matrice 4": ModelLimits(
         model="Matrice 4",
         max_wind_resistance_ms=12.0,

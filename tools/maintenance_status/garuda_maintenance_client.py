@@ -68,7 +68,13 @@ class GarudaMaintenanceClient:
         except rest_client.APIError as exc:
             raise FleetDataUnavailableError(str(exc)) from exc
 
-        wanted = {
+        # Match on the drone id first. Verified live: a flight's nested drone
+        # object carries `id`, and the fleet listing's `name` may differ from
+        # the flight's — "NTU Sim Drone D (apm controls)" on the drone record
+        # against "NTU Sim Drone D" on the flight — so name matching alone
+        # silently returns zero flights and reports every airframe as unflown.
+        wanted_ids = {drone.drone_id.strip().casefold()} if drone.drone_id else set()
+        wanted_names = {
             value.strip().casefold()
             for value in (drone.name, drone.serial_number)
             if isinstance(value, str) and value.strip()
@@ -76,9 +82,18 @@ class GarudaMaintenanceClient:
 
         records: list[FlightRecord] = []
         for raw in _iter_records(payload, "flights"):
-            record = _to_flight_record(raw)
-            if record.drone_name and record.drone_name.strip().casefold() in wanted:
-                records.append(record)
+            nested = raw.get("drone") if isinstance(raw.get("drone"), dict) else {}
+            flight_drone_id = nested.get("id") or nested.get("drone_id")
+
+            if isinstance(flight_drone_id, str) and flight_drone_id.strip():
+                if flight_drone_id.strip().casefold() not in wanted_ids:
+                    continue
+            else:
+                record_name = (nested.get("name") or raw.get("drone_name") or "")
+                if record_name.strip().casefold() not in wanted_names:
+                    continue
+
+            records.append(_to_flight_record(raw))
         return records
 
     def get_service_records(self, *, drone: DroneRef) -> list[ServiceRecord]:
@@ -147,9 +162,20 @@ def _model_name(raw: dict[str, Any]) -> str | None:
             nested = value.get("name") or value.get("model_name")
             if isinstance(nested, str) and nested.strip():
                 return nested.strip()
-    # Only an id is available. The service plan table is keyed by name, so an
-    # unmapped id yields no plan, and the tool returns NEEDS_INFO rather than
-    # comparing against an interval it invented.
+    # Only an id is available, which is the normal case: a Plex drone record
+    # references its model by `drone_model_id` and carries no name. Resolve it
+    # through the model catalogue, reusing the readiness tool's cache so a
+    # fleet of known models costs no extra requests.
+    model_id = raw.get("drone_model_id")
+    if isinstance(model_id, str) and model_id.strip():
+        from tools.flight_readiness.garuda_aircraft_adapter import (
+            resolve_model_from_catalogue,
+        )
+
+        name, _ = resolve_model_from_catalogue(model_id.strip())
+        if name:
+            return name
+
     return None
 
 
