@@ -10,6 +10,7 @@ source is down, endurance and airworthiness are still assessed, so a pilot sees
 every failing factor in one call rather than one per call.
 """
 
+from dataclasses import replace
 from datetime import datetime
 
 from tools.flight_readiness.aggregation import (
@@ -100,6 +101,7 @@ def check_flight_readiness(
         )
 
     battery = _fetch_battery(aircraft_client, aircraft)
+    battery, battery_assumptions = _apply_pilot_battery(battery, request, now=now)
     maintenance = _fetch_maintenance(maintenance_reader, aircraft)
 
     duration, duration_derived = _mission_duration(request)
@@ -152,7 +154,7 @@ def check_flight_readiness(
         checks=checks,
         blocking_factors=collect_blocking_factors(checks),
         warnings=collect_warnings(checks),
-        assumptions=collect_assumptions(checks),
+        assumptions=battery_assumptions + collect_assumptions(checks),
         recommended_actions=tuple(recommended),
         data_checked_at=now,
     )
@@ -289,6 +291,49 @@ def _fetch_aircraft(
         return None, exc
     except AircraftDataUnavailableError as exc:
         return None, exc
+
+
+def _apply_pilot_battery(
+    battery: BatteryRecord | None,
+    request: FlightReadinessRequest,
+    *,
+    now: datetime,
+) -> tuple[BatteryRecord | None, tuple[str, ...]]:
+    """Fall back to a pilot-reported charge when no system can supply one.
+
+    Verified against the live sandbox: Plex exposes battery state nowhere —
+    no endpoint, no field on the drone record, none on the flight record. It
+    exists only in live telemetry, which emits only while a drone is flying.
+    So for a pre-flight check the pilot reading the controller is often the
+    only source there is.
+
+    System data always wins. A pilot figure is used only to fill a gap, and is
+    always recorded as an assumption so the number can be told apart from a
+    measured one.
+    """
+    reported = request.battery_charge_percent
+    if reported is None:
+        return battery, ()
+
+    if battery is not None and battery.state_of_charge is not None:
+        return battery, (
+            "Battery charge was supplied by the pilot but a system reading was "
+            "available, so the system reading was used.",
+        )
+
+    fraction = reported / 100.0
+    assumption = (
+        f"Battery charge of {reported:.0f}% was reported by the pilot, not "
+        f"read from Plex or live telemetry."
+    )
+
+    if battery is None:
+        return (
+            BatteryRecord(state_of_charge=fraction, observed_at=now),
+            (assumption,),
+        )
+
+    return replace(battery, state_of_charge=fraction, observed_at=now), (assumption,)
 
 
 def _fetch_battery(

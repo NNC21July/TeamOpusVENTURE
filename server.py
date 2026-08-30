@@ -497,6 +497,14 @@ def check_flight_readiness(request: FlightReadinessRequest) -> dict:
     above ground in metres. Mission duration in minutes is optional and is
     derived from the flight window if omitted.
 
+    Battery charge: Plex does not store battery state, so unless the drone is
+    airborne and streaming telemetry, the endurance check cannot run and the
+    result will be UNKNOWN. If the pilot can read the charge off the
+    controller, pass it as battery_charge_percent (0-100) and endurance will
+    be assessed. If they have not mentioned it, ask — one number turns an
+    UNKNOWN into a real answer. A pilot-supplied figure is always labelled as
+    such in the response.
+
     Compares forecast or current weather against the aircraft's operating
     limits, checks battery endurance against the planned mission, and confirms
     the airframe is not overdue for service. Returns a decision of GO,
