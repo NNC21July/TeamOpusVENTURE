@@ -14,7 +14,12 @@ POLICIES: dict[str, Tier] = {
     "summarize_flight_inspection": Tier.ALLOW,
     "list_flights": Tier.ALLOW,
     "check_approval_status": Tier.ALLOW,
-    
+    "check_route_airspace_compliance": Tier.ALLOW,
+    "check_flight_readiness": Tier.ALLOW,
+    "get_drone_maintenance_status": Tier.ALLOW,
+    "demo_summarize_flight_inspection_from_csv": Tier.ALLOW,
+
+
     # State-changing: a pilot must approve before these run.
     "testing_tool": Tier.REQUIRE_APPROVAL,
     "set_drone_note": Tier.REQUIRE_APPROVAL,

@@ -151,7 +151,7 @@ def verify_chain() -> tuple[bool, str | None]:
             record.params_hash, record.request_id, record.pilot_id,
         )
         if recomputed != record.hash:
-            return False, f"record {i} ({record.event}): stored hash does not match recomputed hash — record was altered"
+            return False, f"record {i} ({record.event}): stored hash does not match recomputed hash - record was altered"
 
         expected_prev = record.hash
 
