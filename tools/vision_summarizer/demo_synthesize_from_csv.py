@@ -9,7 +9,7 @@ still unresolved (see rest_client.py's outage/bug notes) — nothing here
 depends on either being fixed.
 
 Usage (run from the repo root, as a module so `tools.*` imports resolve):
-    python -m tools.vision_summarizer.demo_synthesize_from_csv /path/to/annotations.csv <image-filename> [flight_id]
+    python -m tools.vision_summarizer.demo_synthesize_from_csv /path/to/annotations.csv <image-filename> [flight_id] [reference_label]
 
 Example:
     python -m tools.vision_summarizer.demo_synthesize_from_csv labels.csv facade_inspection_test.jpg
@@ -26,11 +26,12 @@ from tools.vision_summarizer.tests.fakes import FakeDetectionClient, FakeMediaCl
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print(f"Usage: python {sys.argv[0]} /path/to/annotations.csv <image-filename> [flight_id]")
+        print(f"Usage: python {sys.argv[0]} /path/to/annotations.csv <image-filename> [flight_id] [reference_label]")
         sys.exit(1)
 
     csv_path, filename = sys.argv[1], sys.argv[2]
     flight_id = sys.argv[3] if len(sys.argv) > 3 else "DEMO-FLIGHT"
+    reference_label = sys.argv[4] if len(sys.argv) > 4 else None
 
     rows = rows_for_filename(parse_csv_rows(csv_path), filename)
     if not rows:
@@ -46,7 +47,7 @@ def main() -> None:
     detection_client = FakeDetectionClient(detections_by_media={media_id: detections})
 
     result = summarize_flight(
-        request=SummarizeFlightRequest(flight_id=flight_id),
+        request=SummarizeFlightRequest(flight_id=flight_id, reference_label=reference_label),
         media_client=media_client,
         detection_client=detection_client,
     )
