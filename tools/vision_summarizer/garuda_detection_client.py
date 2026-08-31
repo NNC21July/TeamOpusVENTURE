@@ -40,6 +40,16 @@ _SUPPORTED_MEDIA_TYPES = ("image", "video")
 
 class GarudaDetectionClient:
     def get_detections_for_media(self, *, media: MediaItem) -> list[RawDetection]:
+        """DEAD PREMISE (2026-08-30): this calls create_detections() with
+        _DEFAULT_LABELS as if requesting inference for those classes. Garuda
+        has since confirmed /ml_detections/upload runs no inference at all —
+        it only persists pre-computed detections. Sending label *names*
+        instead of real bbox/score detections can never return anything
+        real. summarize_flight_inspection should call
+        get_stored_detections_for_media() instead, which reads back
+        detections already persisted via annotation_import.py. Left in place
+        pending that swap rather than deleted mid-investigation.
+        """
         if media.media_type not in _SUPPORTED_MEDIA_TYPES:
             raise DetectionDataUnavailableError(
                 f"media_type '{media.media_type}' is not supported "
@@ -54,6 +64,26 @@ class GarudaDetectionClient:
                 labels=_DEFAULT_LABELS,
                 created_by=_CREATED_BY,
             )
+        except rest_client.APIError as exc:
+            raise DetectionDataUnavailableError(str(exc)) from exc
+
+        raw_detections = _extract_detection_list(data)
+        return [_to_raw_detection(item, media.media_id) for item in raw_detections if isinstance(item, dict)]
+
+    def get_stored_detections_for_media(self, *, media: MediaItem) -> list[RawDetection]:
+        """Read back detections that already exist for this media, instead of
+        (re-)calling /ml_detections/upload.
+
+        For use once detections have been persisted separately — e.g. via
+        annotation_import.py loading a human-annotated CSV. get_detections_for_media
+        always goes through the upload path, which either runs fresh inference
+        or attempts to create new detections (still unconfirmed which, and
+        currently blocked by a Garuda-side bug — see rest_client.create_detections);
+        this instead reads GET /ml_detections, which is confirmed to just query
+        existing records without re-running anything.
+        """
+        try:
+            data = rest_client.get_detections(params={"media_id": media.media_id})
         except rest_client.APIError as exc:
             raise DetectionDataUnavailableError(str(exc)) from exc
 

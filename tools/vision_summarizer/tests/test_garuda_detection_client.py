@@ -94,6 +94,47 @@ def test_api_error_raises_detection_data_unavailable(monkeypatch):
         client.get_detections_for_media(media=make_media())
 
 
+def test_get_stored_detections_reads_without_uploading(monkeypatch):
+    calls = {}
+
+    def fake_get_detections(params=None):
+        calls["params"] = params
+        return {
+            "ml_detections": [
+                {
+                    "media_id": "MEDIA-1",
+                    "label": {"shape": "yolo-bbox", "bbox": [0.5, 0.5, 0.1, 0.1], "object": "crack", "score": 1.0},
+                }
+            ]
+        }
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("get_stored_detections_for_media must not upload/re-run detection")
+
+    monkeypatch.setattr(rest_client, "get_detections", fake_get_detections)
+    monkeypatch.setattr(rest_client, "get_media_bytes", fail_if_called)
+    monkeypatch.setattr(rest_client, "create_detections", fail_if_called)
+
+    client = GarudaDetectionClient()
+    result = client.get_stored_detections_for_media(media=make_media())
+
+    assert calls["params"] == {"media_id": "MEDIA-1"}
+    assert len(result) == 1
+    assert result[0].object_label == "crack"
+    assert result[0].score == 1.0
+
+
+def test_get_stored_detections_api_error_raises_unavailable(monkeypatch):
+    def fake_get_detections(params=None):
+        raise rest_client.APIError("service down")
+
+    monkeypatch.setattr(rest_client, "get_detections", fake_get_detections)
+
+    client = GarudaDetectionClient()
+    with pytest.raises(DetectionDataUnavailableError):
+        client.get_stored_detections_for_media(media=make_media())
+
+
 def test_polygon_shape_is_parsed(monkeypatch):
     monkeypatch.setattr(rest_client, "get_media_bytes", lambda media_id, variant="fullscreen": b"bytes")
     monkeypatch.setattr(

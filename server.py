@@ -5,9 +5,14 @@ from mcp.server.fastmcp.server import FastMCP
 from api_client import rest_client
 from governance import approvals
 from governance.gate import governed
+from tools.vision_summarizer.annotation_import import (
+    parse_csv_rows,
+    rows_for_filename,
+    rows_to_raw_detections,
+)
 from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
-from tools.vision_summarizer.request_response_schemas import SummarizeFlightRequest
+from tools.vision_summarizer.request_response_schemas import MediaItem, SummarizeFlightRequest
 from tools.vision_summarizer.service import summarize_flight
 from tools.route_airspace_compliance.garuda_airspace_client import GarudaAirspaceClient
 from tools.route_airspace_compliance.output_shaper import shape_route_compliance_response
@@ -242,6 +247,64 @@ def summarize_flight_inspection(flight_id: str, focus: str | None = None) -> dic
         request=request,
         media_client=GarudaMediaClient(),
         detection_client=GarudaDetectionClient(),
+    )
+    return _shape_summary(response)
+
+
+class _DemoMediaClient:
+    """One-off stand-in for demo_summarize_flight_inspection_from_csv — not
+    the shared test double in tests/fakes.py, so this tool has no import
+    dependency on the test suite."""
+
+    def __init__(self, media_items: list) -> None:
+        self._media_items = media_items
+
+    def get_media_for_flight(self, *, flight_id: str) -> list:
+        return list(self._media_items)
+
+
+class _DemoDetectionClient:
+    def __init__(self, detections: list) -> None:
+        self._detections = detections
+
+    def get_detections_for_media(self, *, media) -> list:
+        return list(self._detections)
+
+
+@mcp.tool()
+def demo_summarize_flight_inspection_from_csv(csv_path: str, image_filename: str, flight_id: str = "DEMO-FLIGHT") -> dict:
+    """
+    DEMO ONLY — summarize a facade inspection from a local annotation CSV,
+    with no live Garuda calls at all.
+
+    Use this instead of summarize_flight_inspection while the Inspection Ops
+    / Geo AI services are unavailable, or while Garuda's create_detections
+    labels-format bug is unresolved (see rest_client.py) — this tool never
+    calls either service.
+
+    csv_path: path to a bbox annotation CSV, rows shaped
+        label,x,y,w,h,filename,image_width,image_height (pixel bbox values).
+    image_filename: which image's rows to use from that CSV.
+    flight_id: label only for the returned summary — not looked up anywhere.
+
+    Read-only, reads only the local CSV file. This is NOT the production
+    path: it bypasses GarudaMediaClient/GarudaDetectionClient entirely and
+    exists to demo the synthesis step. Remove once the real pipeline
+    (annotations uploaded live, summarize_flight_inspection reading them
+    back) is confirmed working end-to-end.
+    """
+    rows = rows_for_filename(parse_csv_rows(csv_path), image_filename)
+    if not rows:
+        return {"error": f"No rows in {csv_path} match filename {image_filename!r}"}
+
+    media_id = f"DEMO-{image_filename}"
+    detections = rows_to_raw_detections(rows, media_id=media_id)
+    media = MediaItem(media_id=media_id, media_type="image", captured_at=datetime.now(timezone.utc))
+
+    response = summarize_flight(
+        request=SummarizeFlightRequest(flight_id=flight_id),
+        media_client=_DemoMediaClient([media]),
+        detection_client=_DemoDetectionClient(detections),
     )
     return _shape_summary(response)
 
