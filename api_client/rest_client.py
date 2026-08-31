@@ -45,10 +45,12 @@ genuine backend bug: sending it in the documented format (JSON array of
 JSON-stringified label objects) passes their schema validation but then
 fails at document-creation with a Mongoose "ObjectExpectedError" — their
 backend isn't parsing the string back into an object before using it.
-Reported to Garuda; not yet fixed on their end. Separately and still fully
-open regardless of that bug: whether this endpoint runs real inference at
-all, or only persists pre-computed detections (bbox/score) that we have no
-way to produce ourselves.
+Reported to Garuda; not yet fixed on their end. CONFIRMED by Garuda
+(2026-08-30): this endpoint runs no inference at all — it only persists
+pre-computed detections (bbox/score) supplied by the caller. There is no
+path by which uploading a plain photo alone ever produces detections; a
+human/external annotation source is required every time. See
+tools/vision_summarizer/annotation_import.py.
 """
 
 from __future__ import annotations
@@ -231,25 +233,22 @@ def get_media_bytes(media_id: str, variant: str = "fullscreen") -> bytes:
 def create_detections(
     *, image_bytes: bytes, filename: str, labels: list[str], created_by: str
 ) -> Any:
-    """POST /ml_detections/upload — image / video freeze frame only (confirmed
-    in Geo AI's own docs; video needs frame extraction first, not implemented).
+    """POST /ml_detections/upload — persists detections you already have
+    against an image / video freeze frame. Runs NO inference of its own
+    (CONFIRMED by Garuda, 2026-08-30) — see the module docstring's "Geo AI
+    detection" section. `labels` must therefore be real, pre-computed
+    detections (e.g. from annotation_import.py), never a list of label names
+    you want detected.
 
-    NOT CONFIRMED WORKING (2026-08-28). Two separate open problems, neither
-    resolved yet:
-      1. `labels` here is passed through as a plain list of strings, which is
-         wrong. The real schema wants a JSON array whose elements are each a
-         JSON-stringified MLDetection.label object (shape/bbox-or-polygon/
-         object/score) — e.g. '["{\\"shape\\":\\"yolo-bbox\\",...}"]'. Sending
-         it that way passes Geo AI's schema validation but then fails with a
-         Mongoose "ObjectExpectedError" at document-creation — looks like a
-         genuine bug on their end (reported), not a format mistake on ours.
-      2. Structurally, `labels` expects bbox/score values per detection —
-         i.e. detections you already have — not something this endpoint
-         computes for you. Whether it runs inference at all, or is purely a
-         storage endpoint for detections computed elsewhere, is still an open
-         question with Garuda. Not fixing the `labels` handling here until
-         both of those are actually answered — no point guessing a third
-         format when the blocker isn't the format.
+    NOT CONFIRMED WORKING (2026-08-28) regardless — a separate, still-open
+    backend bug: `labels` here is passed through as a plain list of strings,
+    which is wrong. The real schema wants a JSON array whose elements are
+    each a JSON-stringified MLDetection.label object (shape/bbox-or-polygon/
+    object/score) — e.g. '["{\\"shape\\":\\"yolo-bbox\\",...}"]'
+    (annotation_import.rows_to_label_payloads already builds this shape).
+    Sending it that way passes Geo AI's schema validation but then fails
+    with a Mongoose "ObjectExpectedError" at document-creation — looks like
+    a genuine bug on their end (reported), not a format mistake on ours.
     """
     files = {"image": (filename, image_bytes, "application/octet-stream")}
     data = {"labels": labels, "created_by": created_by}
