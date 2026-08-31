@@ -7,10 +7,8 @@ from governance import approvals
 from governance.gate import governed
 from tools.vision_summarizer.annotation_import import (
     parse_csv_rows,
-    parse_yolo_file,
     rows_for_filename,
     rows_to_raw_detections,
-    yolo_rows_to_raw_detections,
 )
 from tools.vision_summarizer.garuda_detection_client import GarudaDetectionClient
 from tools.vision_summarizer.garuda_media_client import GarudaMediaClient
@@ -320,52 +318,6 @@ def demo_summarize_flight_inspection_from_csv(
 
     media_id = f"DEMO-{image_filename}"
     detections = rows_to_raw_detections(rows, media_id=media_id)
-    media = MediaItem(media_id=media_id, media_type="image", captured_at=datetime.now(timezone.utc))
-
-    response = summarize_flight(
-        request=SummarizeFlightRequest(flight_id=flight_id, reference_label=reference_label),
-        media_client=_DemoMediaClient([media]),
-        detection_client=_DemoDetectionClient(detections),
-    )
-    return _shape_summary(response)
-
-
-@mcp.tool()
-def demo_summarize_flight_inspection_from_yolo(
-    txt_path: str,
-    class_names: dict[int, str],
-    flight_id: str = "DEMO-FLIGHT",
-    reference_label: str | None = None,
-) -> dict:
-    """
-    DEMO ONLY — YOLO-format equivalent of demo_summarize_flight_inspection_from_csv.
-    Same purpose (see that tool's docstring): no live Garuda calls, exists to
-    demo the synthesis step independent of the current Inspection Ops outage
-    and Geo AI upload bug.
-
-    txt_path: path to a YOLO .txt annotation file — one line per detection,
-        "class_id x_center y_center width height", already normalized [0,1].
-    class_names: maps each class_id in that file to a label string, e.g.
-        {0: "crack", 1: "spalling"}. A YOLO .txt file carries no label names
-        itself — this MUST come from whatever classes.txt/data.yaml the
-        annotation export paired with it. Never guess this mapping.
-    flight_id: label only for the returned summary — not looked up anywhere.
-    reference_label: which label (if any) is a structural reference object
-        rather than a defect — must match one of the values in class_names.
-
-    Read-only, reads only the local .txt file. NOT the production path.
-    """
-    rows = parse_yolo_file(txt_path)
-    if not rows:
-        return {"error": f"No rows parsed from {txt_path}"}
-
-    unknown_ids = {row.class_id for row in rows} - set(class_names)
-    if unknown_ids:
-        return {"error": f"class_names has no entry for class_id(s) {sorted(unknown_ids)} found in {txt_path}"}
-
-    filename = txt_path.rsplit("/", 1)[-1]
-    media_id = f"DEMO-{filename}"
-    detections = yolo_rows_to_raw_detections(rows, media_id=media_id, class_names=class_names)
     media = MediaItem(media_id=media_id, media_type="image", captured_at=datetime.now(timezone.utc))
 
     response = summarize_flight(
