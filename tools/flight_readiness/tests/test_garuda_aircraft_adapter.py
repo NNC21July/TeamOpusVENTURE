@@ -55,10 +55,24 @@ def test_mapped_model_id_falls_back_to_local_specs(monkeypatch) -> None:
 
 
 def test_plex_limits_win_over_local_specs() -> None:
+    # Where Plex publishes a value it is authoritative; the local table only
+    # fills the three limits Plex exposes nowhere.
     payload = {**PLEX_DRONE, "drone_model": "Matrice 4", "max_wind_resistance": 9.5}
     record = to_aircraft_record(payload)
-    assert record.limits_source == "plex"
+    assert record.limits_source == "plex+local_specs"
     assert record.max_wind_resistance_ms == 9.5
+    # Temperature is not a Plex field at all, so it came from the local table.
+    assert record.operating_temp_max_c == 40.0
+
+
+def test_local_table_fills_what_plex_never_publishes() -> None:
+    # Verified live: a Plex drone model carries max_flight_time and nothing
+    # else. Wind, temperature and precipitation exist in no Plex field.
+    payload = {**PLEX_DRONE, "drone_model": "Matrice 4", "max_flight_time": 38}
+    record = to_aircraft_record(payload)
+    assert record.max_flight_time_min == 38.0        # Plex
+    assert record.max_wind_resistance_ms == 12.0     # local table
+    assert record.precipitation_tolerance_mm_h == 0.0
 
 
 def test_nested_model_object_is_read() -> None:

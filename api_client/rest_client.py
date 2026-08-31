@@ -190,6 +190,29 @@ def get_flights(params: dict[str, Any] | None = None) -> Any:
     return _get("/aircraft/flights", params=params)
 
 
+def get_drone_models(params: dict[str, Any] | None = None) -> Any:
+    """GET /aircraft/drone-models — the model catalogue (177 entries in the sandbox).
+
+    A drone record references its model only by `drone_model_id`, so a tool
+    that needs the model NAME or its `max_flight_time` has to come here.
+    """
+    return _get("/aircraft/drone-models", params=params)
+
+
+def get_drone_model(drone_model_id: str) -> dict:
+    """GET /aircraft/drone-models/{id} — one model's record.
+
+    CONFIRMED fields: name, category, subcategory, weight, dimension, comms,
+    control_interface, and `max_flight_time` in MINUTES. Wind resistance,
+    operating temperature range and precipitation tolerance are NOT exposed,
+    so those still come from a local specification table.
+    """
+    data = _get(f"/aircraft/drone-models/{drone_model_id}")
+    if isinstance(data, dict):
+        return data.get("drone_model", data)
+    raise APIError(f"unexpected drone model payload for {drone_model_id}")
+
+
 def get_maintenance_records(params: dict[str, Any] | None = None) -> Any:
     """GET /aircraft/maintenance — logged service records.
 

@@ -24,6 +24,23 @@ WARNING_BAND_FRACTION = 0.10
 LOCAL_SOURCE = "local_specs_table"
 
 SERVICE_PLANS: dict[str, ServicePlan] = {
+    # --- models actually present in the NTU sandbox fleet --------------------
+    # Verified live: /aircraft/maintenance-plans returns zero records, so Plex
+    # has no plan for any of these and the tool falls through to here. Without
+    # these entries every real drone returns NEEDS_INFO.
+    "cerana one pro": ServicePlan(
+        model="Cerana ONE Pro",
+        interval_hours=100.0,
+        interval_months=6,
+        source=LOCAL_SOURCE,
+    ),
+    "garuda robotics v220": ServicePlan(
+        model="Garuda Robotics V220",
+        interval_hours=100.0,
+        interval_months=6,
+        source=LOCAL_SOURCE,
+    ),
+    # --- speculative entries, kept for models not in this sandbox -----------
     "matrice 4": ServicePlan(
         model="Matrice 4",
         interval_hours=200.0,

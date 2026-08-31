@@ -65,7 +65,25 @@ def test_ready_to_fly_is_clear() -> None:
 def test_init_status_fails() -> None:
     check = state_check(ac.NOT_READY_TO_FLY)
     assert check.result is CheckResult.FAIL
-    assert "RTF" in check.message
+    assert "not in service" in check.message
+
+
+def test_active_status_is_accepted() -> None:
+    # The live sandbox reports "active" on every drone record. RTF/INIT is the
+    # live-flight vocabulary from telemetry, not a field on the drone record,
+    # so checking a record status against "RTF" would fail every real drone.
+    from dataclasses import replace
+
+    check = state_check(replace(ac.READY, status="active"))
+    assert check.result is CheckResult.CLEAR
+
+
+def test_unrecognised_status_is_unavailable_not_a_failure() -> None:
+    # An unknown status is not evidence the airframe is grounded.
+    from dataclasses import replace
+
+    check = state_check(replace(ac.READY, status="commissioning"))
+    assert check.result is CheckResult.UNAVAILABLE
 
 
 def test_already_flying_is_a_warning() -> None:

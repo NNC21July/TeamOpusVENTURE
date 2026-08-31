@@ -62,6 +62,12 @@ def validate_request(request: FlightReadinessRequest, *, now: datetime) -> Valid
         elif request.mission_duration_min <= 0:
             errors.append("mission_duration_min must be positive")
 
+    if request.battery_charge_percent is not None:
+        if not _is_finite_num(request.battery_charge_percent):
+            errors.append("battery_charge_percent must be a valid number")
+        elif not 0 <= request.battery_charge_percent <= 100:
+            errors.append("battery_charge_percent must be between 0 and 100")
+
     return ValidationResult(errors=tuple(errors))
 
 

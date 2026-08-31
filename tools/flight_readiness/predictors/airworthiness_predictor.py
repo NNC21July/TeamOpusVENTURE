@@ -17,8 +17,22 @@ from tools.flight_readiness.request_response_schemas import (
 )
 from tools.maintenance_status.status_types import MaintenanceStatus
 
-# Plex requires this status before arm or takeoff.
-READY_TO_FLY_STATUS = "RTF"
+# Statuses on the DRONE RECORD that mean the airframe is in service.
+#
+# Verified against the live sandbox: /aircraft/drones reports status "active"
+# for every drone. The RTF / INIT vocabulary in the onboarding handbook is the
+# LIVE FLIGHT state, which arrives over the telemetry WebSocket, not a field on
+# the drone record. Checking a record-level status against "RTF" would fail
+# every real drone, so both vocabularies are accepted here.
+#
+# RTF is kept so that a live-telemetry status still passes once the streaming
+# bridge feeds it in.
+IN_SERVICE_STATUSES = frozenset({"ACTIVE", "RTF"})
+
+# Explicitly not ready. Anything unrecognised is treated as unavailable rather
+# than as a failure, since a status this tool does not know about is not
+# evidence that the airframe is grounded.
+NOT_READY_STATUSES = frozenset({"INIT", "INACTIVE", "RETIRED", "MAINTENANCE"})
 
 
 def check_airworthiness(
@@ -108,7 +122,10 @@ def _check_aircraft_state(*, aircraft: AircraftRecord) -> CheckDetail:
         "is_flying": aircraft.is_flying,
         "serviceable": aircraft.serviceable,
     }
-    threshold = {"required_status": READY_TO_FLY_STATUS, "serviceable": True}
+    threshold = {
+        "in_service_statuses": sorted(IN_SERVICE_STATUSES),
+        "serviceable": True,
+    }
 
     # Plex's own flag, and it outranks everything else here: if the fleet
     # system says the airframe is not serviceable, no amount of RTF status
@@ -133,16 +150,30 @@ def _check_aircraft_state(*, aircraft: AircraftRecord) -> CheckDetail:
             message="Aircraft status could not be read.",
         )
 
-    if aircraft.status.upper() != READY_TO_FLY_STATUS:
+    status = aircraft.status.upper()
+
+    if status in NOT_READY_STATUSES:
         return CheckDetail(
             check_id="MNT-002",
             category="aircraft_state",
             result=CheckResult.FAIL,
             observed=observed,
             threshold=threshold,
+            message=f"Drone status is {aircraft.status!r}, which is not in service.",
+        )
+
+    if status not in IN_SERVICE_STATUSES:
+        # An unrecognised status is not evidence the airframe is grounded, but
+        # it is not evidence it is flyable either.
+        return CheckDetail(
+            check_id="MNT-002",
+            category="aircraft_state",
+            result=CheckResult.UNAVAILABLE,
+            observed=observed,
+            threshold=threshold,
             message=(
-                f"Drone status is {aircraft.status!r}, not "
-                f"{READY_TO_FLY_STATUS} (ready to fly)."
+                f"Drone status {aircraft.status!r} is not a status this tool "
+                f"recognises, so readiness could not be confirmed."
             ),
         )
 

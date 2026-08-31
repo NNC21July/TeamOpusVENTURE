@@ -25,6 +25,13 @@ class FlightReadinessRequest:
     location: Location
     planned_altitude_m: float
     mission_duration_min: float | None = None
+    # Battery charge as a percentage, 0-100, when the pilot can read it off
+    # the controller. Verified against the live sandbox: Plex exposes no
+    # battery state anywhere — /aircraft/batteries and friends all 404, and a
+    # drone record carries no battery field — so without either live telemetry
+    # or a pilot-supplied figure the endurance check can never be assessed.
+    # Plex and telemetry take precedence when either can supply it.
+    battery_charge_percent: float | None = None
 
 
 @dataclass(frozen=True)
