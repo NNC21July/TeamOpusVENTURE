@@ -97,6 +97,57 @@ def test_all_detections_unavailable_returns_unknown() -> None:
     assert "unreachable" not in result.notes[0].lower()
 
 
+def test_reference_label_populates_relation_and_is_excluded_from_findings() -> None:
+    # reference_label must be supplied by the caller — there's no fixed
+    # label taxonomy to guess from (each annotate.garuda.io project defines
+    # its own), so this only activates when the caller says which label
+    # means "structural reference" for this project.
+    request = SummarizeFlightRequest(flight_id="FLIGHT-1", reference_label="facade")
+    captured_at = datetime(2026, 8, 1, 9, 14, tzinfo=timezone.utc)
+    media_client = FakeMediaClient(media=[make_media("MEDIA-1", captured_at)])
+
+    reference = RawDetection(
+        media_id="MEDIA-1", object_label="facade", score=0.99,
+        shape=DetectionShape.YOLO_BBOX, bbox=(0.5, 0.5, 1.0, 1.0),
+    )
+    crack = RawDetection(
+        media_id="MEDIA-1", object_label="crack", score=0.9,
+        shape=DetectionShape.YOLO_BBOX, bbox=(0.5, 0.5, 0.05, 0.05),
+    )
+    detection_client = FakeDetectionClient(detections_by_media={"MEDIA-1": [reference, crack]})
+
+    result = summarize_flight(request=request, media_client=media_client, detection_client=detection_client)
+
+    assert result.status is SummaryStatus.COMPLETE
+    findings = result.findings[0].detections
+    assert all(d.object_label != "facade" for d in findings)  # reference is not a finding
+    assert len(findings) == 1
+    assert findings[0].object_label == "crack"
+    assert findings[0].relation == "overlapping the facade"
+
+
+def test_no_reference_label_reports_every_detection_as_a_finding() -> None:
+    # Without an explicit reference_label, nothing is assumed about the
+    # label taxonomy: a detection labeled "facade" is just another finding,
+    # not silently treated as a structural reference.
+    request = SummarizeFlightRequest(flight_id="FLIGHT-1")
+    captured_at = datetime(2026, 8, 1, 9, 14, tzinfo=timezone.utc)
+    media_client = FakeMediaClient(media=[make_media("MEDIA-1", captured_at)])
+
+    facade_detection = RawDetection(
+        media_id="MEDIA-1", object_label="facade", score=0.99,
+        shape=DetectionShape.YOLO_BBOX, bbox=(0.5, 0.5, 1.0, 1.0),
+    )
+    detection_client = FakeDetectionClient(detections_by_media={"MEDIA-1": [facade_detection]})
+
+    result = summarize_flight(request=request, media_client=media_client, detection_client=detection_client)
+
+    findings = result.findings[0].detections
+    assert len(findings) == 1
+    assert findings[0].object_label == "facade"
+    assert findings[0].relation is None
+
+
 def test_video_finding_forces_partial_status_with_honest_note() -> None:
     # Even when the detection call itself succeeds for a video (via a
     # single Garuda-selected frame — see GarudaDetectionClient), that's not

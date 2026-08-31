@@ -220,16 +220,26 @@ def _shape_summary(response) -> dict:
 
 
 @mcp.tool()
-def summarize_flight_inspection(flight_id: str, focus: str | None = None) -> dict:
+def summarize_flight_inspection(
+    flight_id: str, focus: str | None = None, reference_label: str | None = None
+) -> dict:
     """
     Summarize what was captured during a flight's facade inspection.
 
     Given a flight_id, retrieves the flight's media, runs it through Garuda's
     Geo AI detection, and returns deduplicated, plain-language-described
-    findings (what was detected, roughly where in the frame, and how it
-    relates to the facade if that context is available). Pass
+    findings (what was detected, roughly where in the frame). Pass
     focus="defects only" to narrow findings to defect-type detections when
     writing your summary.
+
+    reference_label: the label (if any) this inspection's annotate.garuda.io
+    project uses for a structural reference object (e.g. "facade" or
+    "window") — there is no fixed taxonomy to guess from, every project
+    defines its own labels, so this can only come from whoever set up that
+    project. If you don't know it, leave this unset: findings are still
+    returned in full, just without a `relation` description relative to
+    anything. If given but no detection actually has that label, it's
+    silently ignored — every detection is still reported normally.
 
     Video media: currently summarized from a single representative frame
     only, not the full video — findings from video will have a note saying
@@ -242,7 +252,7 @@ def summarize_flight_inspection(flight_id: str, focus: str | None = None) -> dic
     whether they're seeing the full picture. Read-only: it only reads
     flight/media/detection data and changes nothing.
     """
-    request = SummarizeFlightRequest(flight_id=flight_id, focus=focus)
+    request = SummarizeFlightRequest(flight_id=flight_id, focus=focus, reference_label=reference_label)
     response = summarize_flight(
         request=request,
         media_client=GarudaMediaClient(),
@@ -272,7 +282,12 @@ class _DemoDetectionClient:
 
 
 @mcp.tool()
-def demo_summarize_flight_inspection_from_csv(csv_path: str, image_filename: str, flight_id: str = "DEMO-FLIGHT") -> dict:
+def demo_summarize_flight_inspection_from_csv(
+    csv_path: str,
+    image_filename: str,
+    flight_id: str = "DEMO-FLIGHT",
+    reference_label: str | None = None,
+) -> dict:
     """
     DEMO ONLY — summarize a facade inspection from a local annotation CSV,
     with no live Garuda calls at all.
@@ -286,6 +301,10 @@ def demo_summarize_flight_inspection_from_csv(csv_path: str, image_filename: str
         label,x,y,w,h,filename,image_width,image_height (pixel bbox values).
     image_filename: which image's rows to use from that CSV.
     flight_id: label only for the returned summary — not looked up anywhere.
+    reference_label: which label in THIS CSV (if any) is a structural
+        reference object rather than a defect — e.g. "facade". Only set this
+        if that label is actually present in the CSV; annotate.garuda.io's
+        label taxonomy is project-specific, so there's nothing to guess here.
 
     Read-only, reads only the local CSV file. This is NOT the production
     path: it bypasses GarudaMediaClient/GarudaDetectionClient entirely and
@@ -302,7 +321,7 @@ def demo_summarize_flight_inspection_from_csv(csv_path: str, image_filename: str
     media = MediaItem(media_id=media_id, media_type="image", captured_at=datetime.now(timezone.utc))
 
     response = summarize_flight(
-        request=SummarizeFlightRequest(flight_id=flight_id),
+        request=SummarizeFlightRequest(flight_id=flight_id, reference_label=reference_label),
         media_client=_DemoMediaClient([media]),
         detection_client=_DemoDetectionClient(detections),
     )

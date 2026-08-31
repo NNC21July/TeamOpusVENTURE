@@ -51,6 +51,17 @@ pre-computed detections (bbox/score) supplied by the caller. There is no
 path by which uploading a plain photo alone ever produces detections; a
 human/external annotation source is required every time. See
 tools/vision_summarizer/annotation_import.py.
+
+Garuda DOES have a real defect/person-detection ML model (CONFIRMED by
+Garuda, 2026-08-31) — it is just not this endpoint. It runs against live
+video streaming during an active flight, a separate product surface from
+the Inspection Ops REST API this project uses, and is likely gated behind
+account access this project doesn't have regardless. Facade inspections in
+this project's flow are reviewed after the flight, from already-captured
+stored images — there is no live stream to attach that model to even with
+access. So for this project's use case, `/ml_detections/upload` persisting
+externally-supplied detections isn't a workaround for a missing feature —
+it's the only detection path that was ever going to apply here.
 """
 
 from __future__ import annotations

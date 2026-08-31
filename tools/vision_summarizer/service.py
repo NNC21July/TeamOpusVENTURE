@@ -9,9 +9,33 @@ from tools.vision_summarizer.descriptors.dedup import dedupe_detections
 from tools.vision_summarizer.input_validation import validate_request
 from tools.vision_summarizer.request_response_schemas import (
     MediaFinding,
+    RawDetection,
     SummarizeFlightRequest,
     SummarizeFlightResponse,
 )
+
+def _split_reference(
+    detections: tuple[RawDetection, ...] | list[RawDetection],
+    reference_label: str | None,
+):
+    """Pull out the first detection matching reference_label, if given, from
+    a media item's raw detections. Returns (reference, defect_detections) —
+    the reference itself is excluded from defect_detections so it's never
+    double-reported as a finding.
+
+    There is no fixed set of "reference" label names to match against: each
+    annotate.garuda.io project defines its own label taxonomy, so a caller
+    must say explicitly which label (if any) means "structural reference" for
+    that project — see SummarizeFlightRequest.reference_label. With no
+    reference_label given, every detection is treated as a defect and
+    `relation` is simply never computed (not an error — most projects likely
+    have no reference class labeled at all).
+    """
+    if reference_label is None:
+        return None, list(detections)
+    reference = next((d for d in detections if d.object_label == reference_label), None)
+    defects = [d for d in detections if d.object_label != reference_label]
+    return reference, defects
 
 
 def summarize_flight(
@@ -71,7 +95,12 @@ def summarize_flight(
         # Descriptor layer: raw geometry -> plain-language position, and
         # near-duplicate detections across frames collapsed into one entry
         # per real-world object. See descriptors/spatial.py and dedup.py.
-        described = dedupe_detections(raw_detections)
+        # A structural reference detection (e.g. the facade/window itself)
+        # is pulled out here so dedupe_detections can describe the other
+        # detections *relative to it* ("near the window") — it is never
+        # reported as a finding itself.
+        reference, defect_detections = _split_reference(raw_detections, request.reference_label)
+        described = dedupe_detections(defect_detections, reference=reference)
 
         findings.append(
             MediaFinding(

@@ -56,7 +56,8 @@ def main() -> None:
     for finding in result.findings:
         print(f"\nmedia_id={finding.media_id}")
         for d in finding.detections:
-            print(f"  - {d.object_label} x{d.occurrence_count} at {d.position}, score={d.score}")
+            where = f"{d.position}, {d.relation}" if d.relation else d.position
+            print(f"  - {d.object_label} x{d.occurrence_count} at {where}, score={d.score}")
     if result.notes:
         print("\nnotes:")
         for note in result.notes:

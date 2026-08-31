@@ -9,6 +9,13 @@ class SummarizeFlightRequest:
     # Information required to summarize a flight's captured media
     flight_id: str
     focus: str | None = None  # e.g. "defects only" vs. "general summary"
+    # Which detection label (if any) means "structural reference object" for
+    # this inspection's project — e.g. "facade" or "window". There's no fixed
+    # taxonomy to guess from: each annotate.garuda.io project defines its own
+    # labels, so this can only come from the caller, who knows which project
+    # this flight's annotations belong to. None (the default) means: don't
+    # look for one — every detection is reported as a defect finding.
+    reference_label: str | None = None
 
 
 @dataclass(frozen=True)
