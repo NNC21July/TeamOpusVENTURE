@@ -39,11 +39,15 @@ def test_rows_for_filename_filters(tmp_path):
     assert all(row.filename == "facade_inspection_test.jpg" for row in matched)
 
 
-def test_rows_to_label_payloads_converts_pixels_to_ratios():
+def test_rows_to_label_payloads_converts_top_left_pixels_to_center_ratios():
+    # x/y in this CSV format are the TOP-LEFT corner, not the center — an
+    # asymmetric box (offset from the image center) is required to actually
+    # catch a top-left-vs-center mixup; a box centered in the frame would
+    # pass either way and hide the bug.
     rows = [
         AnnotationRow(
-            label="crack", x=306, y=204, w=61.2, h=40.8,
-            filename="f.jpg", image_width=612, image_height=408,
+            label="crack", x=100, y=50, w=40, h=20,
+            filename="f.jpg", image_width=200, image_height=100,
         )
     ]
 
@@ -55,10 +59,11 @@ def test_rows_to_label_payloads_converts_pixels_to_ratios():
     assert label_obj["object"] == "crack"
     assert label_obj["score"] == 1.0
     x, y, w, h = label_obj["bbox"]
-    assert x == 0.5
-    assert y == 0.5
-    assert round(w, 3) == 0.1
-    assert round(h, 3) == 0.1
+    # center = top-left + half the box size: (100+20)/200, (50+10)/100
+    assert x == 0.6
+    assert y == 0.6
+    assert round(w, 3) == 0.2
+    assert round(h, 3) == 0.2
 
 
 def test_rows_to_label_payloads_score_override():

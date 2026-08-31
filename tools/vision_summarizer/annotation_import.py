@@ -55,6 +55,27 @@ def rows_for_filename(rows: list[AnnotationRow], filename: str) -> list[Annotati
     return [row for row in rows if row.filename == filename]
 
 
+def _to_center_ratio_bbox(row: AnnotationRow) -> tuple[float, float, float, float]:
+    """Convert a CSV row's pixel bbox — (x, y) is the TOP-LEFT corner in this
+    CSV format — into the CENTER-based ratio bbox the rest of the pipeline
+    expects. RawDetection.bbox is (center_x, center_y, w, h) as fractions of
+    image size, matching YOLO's own convention (descriptors/spatial.py's
+    centroid_of() reads bbox[0:2] directly as a centroid, and
+    describe_relation()'s overlap math assumes center +/- half-width) — so
+    top-left coordinates must be shifted by half the box size, not just
+    divided by image size. Getting this wrong doesn't crash anything, it
+    just silently produces wrong positions/relations — confirmed live: a
+    reference object's mis-shifted center can end up far enough from a
+    genuinely-overlapping defect that describe_relation() never fires.
+    """
+    return (
+        (row.x + row.w / 2) / row.image_width,
+        (row.y + row.h / 2) / row.image_height,
+        row.w / row.image_width,
+        row.h / row.image_height,
+    )
+
+
 def rows_to_label_payloads(rows: list[AnnotationRow], *, score: float = 1.0) -> list[str]:
     """Convert annotation rows (one image's worth) into Geo AI's documented
     label format: a JSON array of JSON-stringified label objects.
@@ -66,12 +87,7 @@ def rows_to_label_payloads(rows: list[AnnotationRow], *, score: float = 1.0) -> 
     for row in rows:
         label_obj = {
             "shape": "yolo-bbox",
-            "bbox": [
-                row.x / row.image_width,
-                row.y / row.image_height,
-                row.w / row.image_width,
-                row.h / row.image_height,
-            ],
+            "bbox": list(_to_center_ratio_bbox(row)),
             "object": row.label,
             "score": score,
         }
@@ -91,12 +107,7 @@ def rows_to_raw_detections(rows: list[AnnotationRow], *, media_id: str, score: f
             object_label=row.label,
             score=score,
             shape=DetectionShape.YOLO_BBOX,
-            bbox=(
-                row.x / row.image_width,
-                row.y / row.image_height,
-                row.w / row.image_width,
-                row.h / row.image_height,
-            ),
+            bbox=_to_center_ratio_bbox(row),
         )
         for row in rows
     ]
